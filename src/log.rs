@@ -1,3 +1,4 @@
+use clap::ValueEnum;
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::{IsTerminal, Write};
@@ -6,7 +7,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[clap(rename_all = "lowercase")]
 pub enum Level {
 	Off = 0,
 	Fatal = 1,
@@ -77,7 +79,13 @@ fn logger() -> &'static Mutex<LoggerInner> {
 	})
 }
 
-pub fn init(path: Option<&Path>, level: Level) {
+pub fn init(
+	path: Option<&Path>,
+	level: Level,
+	show_timestamp: bool,
+	show_source: bool,
+	disable_color: bool,
+) {
 	let (writer, use_color) = match path {
 		Some(p) => match OpenOptions::new().append(true).create(true).open(p) {
 			Ok(f) => (Box::new(f) as Box<dyn Write + Send>, false),
@@ -87,18 +95,26 @@ pub fn init(path: Option<&Path>, level: Level) {
 					"[LOG] warning: could not open log file '{}', falling back to stderr\n",
 					p.display()
 				);
-				(Box::new(std::io::stderr()) as Box<dyn Write + Send>, std::io::stderr().is_terminal())
+				(
+					Box::new(std::io::stderr()) as Box<dyn Write + Send>,
+					std::io::stderr().is_terminal(),
+				)
 			}
 		},
-		None => (Box::new(std::io::stderr()) as Box<dyn Write + Send>, std::io::stderr().is_terminal()),
+		None => (
+			Box::new(std::io::stderr()) as Box<dyn Write + Send>,
+			std::io::stderr().is_terminal(),
+		),
 	};
+
+	let use_color = if disable_color { false } else { use_color };
 
 	let mut inner = logger().lock().unwrap();
 	inner.writer = writer;
 	inner.use_color = use_color;
 	inner.level = level;
-	inner.show_ts = true;
-	inner.show_src = true;
+	inner.show_ts = show_timestamp;
+	inner.show_src = show_source;
 }
 
 pub fn set_level(level: Level) {
@@ -113,6 +129,18 @@ pub fn use_color() -> bool {
 	logger().lock().unwrap().use_color
 }
 
+pub fn set_show_timestamp(v: bool) {
+	logger().lock().unwrap().show_ts = v;
+}
+
+pub fn set_show_source(v: bool) {
+	logger().lock().unwrap().show_src = v;
+}
+
+pub fn set_color(v: bool) {
+	logger().lock().unwrap().use_color = v;
+}
+
 fn format_timestamp() -> String {
 	let dur = SystemTime::now()
 		.duration_since(SystemTime::UNIX_EPOCH)
@@ -125,13 +153,7 @@ fn format_timestamp() -> String {
 	format!("[{:02}:{:02}:{:02}.{:06}] ", h, m, s, us)
 }
 
-pub fn __log_impl(
-	level: Level,
-	file: &str,
-	line: u32,
-	args: fmt::Arguments<'_>,
-	newline: bool,
-) {
+pub fn __log_impl(level: Level, file: &str, line: u32, args: fmt::Arguments<'_>, newline: bool) {
 	let mut inner = logger().lock().unwrap();
 	if level > inner.level {
 		return;
@@ -151,7 +173,13 @@ pub fn __log_impl(
 
 	if color {
 		let _ = write!(inner.writer, "{} [", level.emoji());
-		let _ = write!(inner.writer, "{}{}{}", level.ansi_color(), level.label(), "\x1b[0m");
+		let _ = write!(
+			inner.writer,
+			"{}{}{}",
+			level.ansi_color(),
+			level.label(),
+			"\x1b[0m"
+		);
 		let _ = write!(inner.writer, "] ");
 	} else {
 		let _ = write!(inner.writer, "[{:<5}] ", level.label());
