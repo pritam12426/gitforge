@@ -19,7 +19,7 @@ pub struct Args {
 
 	/// Set log level
 	#[arg(long, short, default_value = "info")]
-	pub log_level: crate::log::Level,
+	pub log_level: crate::log::LogLevel,
 }
 
 impl Args {

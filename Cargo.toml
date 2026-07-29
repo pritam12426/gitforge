@@ -4,13 +4,23 @@
 	edition = "2024"
 
 [features]
-log-timestamp = []
-log-source = []
+	default = []
+
+	# Equivalent of -DLOG_SHOW_TIME_STAMP in the C Makefile.
+	show_time_stamp = ["dep:chrono"]
+
+	# Equivalent of -DLOG_SHOW_SOURCE_LOCATION in the C Makefile.
+	show_source_location = []
 
 [dependencies]
 	anyhow = "1.0.104"
+	chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
 	clap = { version = "4.6.4", features = ["derive"] }
 	git2 = "0.21.0"
 	serde = { version = "1.0.229", features = ["derive"] }
 	serde_json = "1.0.151"
 	thiserror = "2.0.19"
+
+[dev-dependencies]
+	serde_json = "1.0.151"
+	tempfile = "3"
