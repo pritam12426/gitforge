@@ -1,26 +1,45 @@
 [package]
 	name = "gitforge"
-	version = "0.1.0"
+	version = "0.2.0"
 	edition = "2024"
 
 [features]
 	default = []
 
-	# Equivalent of -DLOG_SHOW_TIME_STAMP in the C Makefile.
+	# Equivalent of -DLOG_SHOW_TIME_STAMP in the old C Makefile.
 	show_time_stamp = ["dep:chrono"]
 
-	# Equivalent of -DLOG_SHOW_SOURCE_LOCATION in the C Makefile.
+	# Equivalent of -DLOG_SHOW_SOURCE_LOCATION in the old C Makefile.
 	show_source_location = []
 
 [dependencies]
-	anyhow = "1.0.104"
-	chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
-	clap = { version = "4.6.4", features = ["derive"] }
+	# CLI parsing (both stdio args and the `server` subcommand).
+	clap = { version = "4.6.4", features = ["derive", "env"] }
+
+	# Git plumbing — wrapped behind the actor thread in `src/git`.
 	git2 = "0.21.0"
+
+	# JSON-RPC / MCP payloads.
 	serde = { version = "1.0.229", features = ["derive"] }
 	serde_json = "1.0.151"
+
+	# Error types — one enum per subsystem, all convertible into the
+	# top-level GitforgeError via #[from].
 	thiserror = "2.0.19"
+
+	# Optional timestamped logging (see logging/mod.rs).
+	chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
+
+	# HTTP transport (the `gitforge server` subcommand). Only ever
+	# touched when that subcommand is used — stdio mode never spins up
+	# a tokio runtime.
+	axum = "0.7"
+	tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 
 [dev-dependencies]
 	serde_json = "1.0.151"
 	tempfile = "3"
+	# Lets integration tests drive the axum app in-process (via
+	# `tower::ServiceExt::oneshot`) without binding a real socket.
+	tower = { version = "0.4", features = ["util"] }
+	http-body-util = "0.1"

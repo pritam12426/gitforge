@@ -2,8 +2,11 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use crate::error::GitforgeError;
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
 pub enum RepoResponse {
@@ -14,6 +17,10 @@ pub enum RepoResponse {
 	Diff(String),
 	ShowCommit(serde_json::Value),
 	CommitCreated(String),
+	Staged,
+	BranchCreated(String),
+	CheckoutOk,
+	MergeOk(String),
 }
 
 pub enum RepoCommand {
@@ -24,6 +31,7 @@ pub enum RepoCommand {
 		respond: mpsc::Sender<Result<RepoResponse, GitforgeError>>,
 	},
 	GetLog {
+		offset: usize,
 		max_count: usize,
 		respond: mpsc::Sender<Result<RepoResponse, GitforgeError>>,
 	},
@@ -41,6 +49,23 @@ pub enum RepoCommand {
 		message: String,
 		author_name: String,
 		author_email: String,
+		respond: mpsc::Sender<Result<RepoResponse, GitforgeError>>,
+	},
+	StageFiles {
+		paths: Vec<String>,
+		respond: mpsc::Sender<Result<RepoResponse, GitforgeError>>,
+	},
+	CreateBranch {
+		name: String,
+		revision: String,
+		respond: mpsc::Sender<Result<RepoResponse, GitforgeError>>,
+	},
+	Checkout {
+		branch: String,
+		respond: mpsc::Sender<Result<RepoResponse, GitforgeError>>,
+	},
+	Merge {
+		branch: String,
 		respond: mpsc::Sender<Result<RepoResponse, GitforgeError>>,
 	},
 }
@@ -70,9 +95,13 @@ impl RepoHandle {
 					RepoCommand::GetStatus { respond } => {
 						let _ = respond.send(Self::do_status(&repo));
 					}
-					RepoCommand::GetLog { max_count, respond } => {
-						let _ = respond.send(Self::do_log(&repo, max_count));
-					}
+				RepoCommand::GetLog {
+					offset,
+					max_count,
+					respond,
+				} => {
+					let _ = respond.send(Self::do_log(&repo, offset, max_count));
+				}
 					RepoCommand::GetBranches { respond } => {
 						let _ = respond.send(Self::do_branches(&repo));
 					}
@@ -90,6 +119,22 @@ impl RepoHandle {
 					} => {
 						let _ =
 							respond.send(Self::do_commit(&repo, &message, &author_name, &author_email));
+					}
+					RepoCommand::StageFiles { paths, respond } => {
+						let _ = respond.send(Self::do_stage(&repo, &paths));
+					}
+					RepoCommand::CreateBranch {
+						name,
+						revision,
+						respond,
+					} => {
+						let _ = respond.send(Self::do_create_branch(&repo, &name, &revision));
+					}
+					RepoCommand::Checkout { branch, respond } => {
+						let _ = respond.send(Self::do_checkout(&repo, &branch));
+					}
+					RepoCommand::Merge { branch, respond } => {
+						let _ = respond.send(Self::do_merge(&repo, &branch));
 					}
 				}
 			}
@@ -117,14 +162,21 @@ impl RepoHandle {
 		Ok(RepoResponse::Status(entries))
 	}
 
-	fn do_log(repo: &git2::Repository, max_count: usize) -> Result<RepoResponse, GitforgeError> {
+	fn do_log(
+		repo: &git2::Repository,
+		offset: usize,
+		max_count: usize,
+	) -> Result<RepoResponse, GitforgeError> {
 		let mut revwalk = repo.revwalk()?;
 		revwalk.push_head()?;
 		revwalk.set_sorting(git2::Sort::TIME)?;
 
 		let mut entries = Vec::new();
 		for (i, oid) in revwalk.enumerate() {
-			if i >= max_count {
+			if i < offset {
+				continue;
+			}
+			if entries.len() >= max_count {
 				break;
 			}
 			let oid = oid?;
@@ -227,5 +279,114 @@ impl RepoHandle {
 		)?;
 
 		Ok(RepoResponse::CommitCreated(commit_id.to_string()))
+	}
+
+	fn do_stage(
+		repo: &git2::Repository,
+		paths: &[String],
+	) -> Result<RepoResponse, GitforgeError> {
+		let mut index = repo.index()?;
+		let patterns: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
+		index.add_all(patterns.iter(), git2::IndexAddOption::DEFAULT, None)?;
+		index.write()?;
+		Ok(RepoResponse::Staged)
+	}
+
+	fn do_create_branch(
+		repo: &git2::Repository,
+		name: &str,
+		revision: &str,
+	) -> Result<RepoResponse, GitforgeError> {
+		let obj = repo.revparse_single(revision)?;
+		let commit = obj.peel_to_commit()?;
+		repo.branch(name, &commit, false)?;
+		Ok(RepoResponse::BranchCreated(name.to_string()))
+	}
+
+	fn do_checkout(
+		repo: &git2::Repository,
+		branch: &str,
+	) -> Result<RepoResponse, GitforgeError> {
+		let obj = repo.revparse_single(branch)?;
+		repo.checkout_tree(&obj, None)?;
+		// Check if it's a branch name (not a detached ref)
+		if branch.starts_with("refs/heads/") {
+			repo.set_head(branch)?;
+		} else {
+			// Try as a branch name without refs/heads/
+			let full_ref = format!("refs/heads/{}", branch);
+			if repo.find_reference(&full_ref).is_ok() {
+				repo.set_head(&full_ref)?;
+			} else {
+				repo.set_head_detached(obj.id())?;
+			}
+		}
+		Ok(RepoResponse::CheckoutOk)
+	}
+
+	fn do_merge(
+		repo: &git2::Repository,
+		branch: &str,
+	) -> Result<RepoResponse, GitforgeError> {
+		let head = repo.head()?.peel_to_commit()?;
+		let obj = repo.revparse_single(branch)?;
+		let other = obj.peel_to_commit()?;
+
+		let merge_base = repo.merge_base(head.id(), other.id())?;
+		if merge_base == other.id() {
+			return Ok(RepoResponse::MergeOk("already up-to-date".into()));
+		}
+		if merge_base == head.id() {
+			// Fast-forward: move HEAD to other
+			let obj = repo.revparse_single(branch)?;
+			repo.checkout_tree(&obj, None)?;
+			let refname = format!("refs/heads/{}", branch);
+			repo.set_head(&refname)?;
+			repo.set_head(format!("refs/heads/{}", branch).as_str())?;
+			return Ok(RepoResponse::MergeOk(format!("fast-forward to {}", branch)));
+		}
+
+		// Three-way merge
+		let head_tree = head.tree()?;
+		let other_tree = other.tree()?;
+		let base_commit = repo.find_commit(merge_base)?;
+		let base_tree = base_commit.tree()?;
+
+		let mut index = repo.merge_trees(&base_tree, &head_tree, &other_tree, None)?;
+		if index.has_conflicts() {
+			index.write()?;
+			return Err(GitforgeError::Internal(format!(
+				"merge conflicts with '{}'",
+				branch
+			)));
+		}
+
+		let tree_id = index.write_tree_to(repo)?;
+		let tree = repo.find_tree(tree_id)?;
+		let signature = git2::Signature::now("gitforge", "gitforge@mcp")?;
+		repo.commit(
+			Some("HEAD"),
+			&signature,
+			&signature,
+			&format!("Merge branch '{}'", branch),
+			&tree,
+			&[&head, &other],
+		)?;
+
+		Ok(RepoResponse::MergeOk(format!("merged '{}'", branch)))
+	}
+}
+
+/// Receive a response from the actor, with a 30-second timeout.
+/// Prevents the server from hanging forever on a blocked git2 call.
+pub fn recv_response(
+	rx: mpsc::Receiver<Result<RepoResponse, GitforgeError>>,
+) -> Result<RepoResponse, GitforgeError> {
+	match rx.recv_timeout(REQUEST_TIMEOUT) {
+		Ok(result) => result,
+		Err(mpsc::RecvTimeoutError::Timeout) => {
+			Err(GitforgeError::Internal("request timed out".into()))
+		}
+		Err(mpsc::RecvTimeoutError::Disconnected) => Err(GitforgeError::ChannelClosed),
 	}
 }

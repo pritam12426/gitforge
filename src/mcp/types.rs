@@ -35,12 +35,7 @@ pub struct JsonRpcError {
 
 impl JsonRpcResponse {
 	pub fn success(id: Option<serde_json::Value>, result: serde_json::Value) -> Self {
-		JsonRpcResponse {
-			jsonrpc: "2.0".into(),
-			id,
-			result: Some(result),
-			error: None,
-		}
+		JsonRpcResponse { jsonrpc: "2.0".into(), id, result: Some(result), error: None }
 	}
 
 	pub fn error(id: Option<serde_json::Value>, code: i32, message: impl Into<String>) -> Self {
@@ -48,21 +43,19 @@ impl JsonRpcResponse {
 			jsonrpc: "2.0".into(),
 			id,
 			result: None,
-			error: Some(JsonRpcError {
-				code,
-				message: message.into(),
-				data: None,
-			}),
+			error: Some(JsonRpcError { code, message: message.into(), data: None }),
 		}
 	}
 
+	/// A JSON-RPC notification never gets a reply. Transports use this
+	/// sentinel to recognise "produce no output" without threading an
+	/// `Option<JsonRpcResponse>` through every call site.
 	pub fn notification() -> Self {
-		JsonRpcResponse {
-			jsonrpc: "2.0".into(),
-			id: None,
-			result: None,
-			error: None,
-		}
+		JsonRpcResponse { jsonrpc: "2.0".into(), id: None, result: None, error: None }
+	}
+
+	pub fn is_notification_sentinel(&self) -> bool {
+		self.id.is_none() && self.result.is_none() && self.error.is_none()
 	}
 }
 

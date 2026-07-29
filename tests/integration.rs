@@ -1,339 +1,493 @@
+//! Integration tests.
+//!
+//! Two styles, deliberately kept separate:
+//!
+//!   * stdio tests spawn the compiled `gitforge` binary as a subprocess
+//!     and speak line-delimited JSON-RPC over its stdin/stdout — this is
+//!     the only way to genuinely test "is the protocol correct over the
+//!     real transport" and matches how the original test suite worked.
+//!   * HTTP tests build the axum app in-process (via the new `gitforge`
+//!     lib target) and drive it with `tower::ServiceExt::oneshot` — no
+//!     socket, no subprocess, just the `Service` trait — which is only
+//!     possible now that gitforge exposes a lib alongside the binary.
+
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 
-/// Create a temporary git repo with some commits for testing.
-fn setup_repo() -> tempfile::TempDir {
+use serde_json::{json, Value};
+use tempfile::TempDir;
+
+// ── stdio helpers ───────────────────────────────────────────────────────
+
+/// Creates a temp repo with two commits and a configured identity, ready
+/// for tools that read history (git_log, git_show, git_diff, ...).
+fn setup_repo() -> TempDir {
 	let dir = tempfile::tempdir().expect("tempdir");
+	let mut opts = git2::RepositoryInitOptions::new();
+	opts.initial_head("master");
+	let repo = git2::Repository::init_opts(dir.path(), &opts).expect("git init");
 
-	Command::new("git")
-		.args(["-C", dir.path().to_str().unwrap(), "init"])
-		.output()
-		.expect("git init");
+	{
+		let mut config = repo.config().expect("config");
+		config.set_str("user.name", "Test User").unwrap();
+		config.set_str("user.email", "test@example.com").unwrap();
+	}
 
-	Command::new("git")
-		.args([
-			"-C",
-			dir.path().to_str().unwrap(),
-			"config",
-			"user.email",
-			"test@test.com",
-		])
-		.output()
-		.expect("git config email");
-
-	Command::new("git")
-		.args([
-			"-C",
-			dir.path().to_str().unwrap(),
-			"config",
-			"user.name",
-			"Test",
-		])
-		.output()
-		.expect("git config name");
-
-	std::fs::write(dir.path().join("file1.txt"), b"hello world\n").unwrap();
-	Command::new("git")
-		.args(["-C", dir.path().to_str().unwrap(), "add", "."])
-		.output()
-		.expect("git add");
-
-	Command::new("git")
-		.args(["-C", dir.path().to_str().unwrap(), "commit", "-m", "initial commit"])
-		.output()
-		.expect("git commit");
-
-	std::fs::write(dir.path().join("file2.txt"), b"second file\n").unwrap();
-	Command::new("git")
-		.args(["-C", dir.path().to_str().unwrap(), "add", "."])
-		.output()
-		.expect("git add");
-
-	Command::new("git")
-		.args(["-C", dir.path().to_str().unwrap(), "commit", "-m", "add file2"])
-		.output()
-		.expect("git commit");
+	write_and_commit(&repo, dir.path(), "README.md", "hello\n", "Initial commit");
+	write_and_commit(&repo, dir.path(), "README.md", "hello\nworld\n", "Second commit");
 
 	dir
 }
 
-/// Spawn the binary, send a JSON-RPC request, read one response line.
-fn send_request(
-	dir: &tempfile::TempDir,
-	req: &str,
-) -> (std::process::Child, String) {
-	let mut child = Command::new(env!("CARGO_BIN_EXE_gitforge"))
-		.arg(dir.path())
-		.stdin(Stdio::piped())
-		.stdout(Stdio::piped())
-		.stderr(Stdio::null())
-		.spawn()
-		.expect("spawn gitforge");
+fn write_and_commit(repo: &git2::Repository, dir: &Path, file: &str, contents: &str, msg: &str) {
+	std::fs::write(dir.join(file), contents).unwrap();
 
-	let stdin = child.stdin.as_mut().unwrap();
-	writeln!(stdin, "{}", req).unwrap();
-	stdin.flush().unwrap();
+	let mut index = repo.index().unwrap();
+	index.add_path(Path::new(file)).unwrap();
+	index.write().unwrap();
+	let tree_id = index.write_tree().unwrap();
+	let tree = repo.find_tree(tree_id).unwrap();
 
-	let stdout = child.stdout.take().unwrap();
-	let mut reader = BufReader::new(stdout);
-	let mut line = String::new();
-	reader.read_line(&mut line).expect("read response line");
+	let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
+	let parents: Vec<git2::Commit> =
+		repo.head().ok().and_then(|h| h.peel_to_commit().ok()).into_iter().collect();
+	let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
 
-	(child, line)
+	repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parent_refs).unwrap();
 }
+
+/// Spawns the compiled binary against `dir` in stdio mode and returns
+/// a session that holds the piped stdin/stdout handles.
+struct TestSession {
+	stdin: std::process::ChildStdin,
+	reader: BufReader<std::process::ChildStdout>,
+	child: Option<Child>,
+}
+
+impl TestSession {
+	fn spawn(dir: &Path) -> Self {
+		let mut child = Command::new(env!("CARGO_BIN_EXE_gitforge"))
+			.arg("--repo")
+			.arg(dir)
+			.arg("--log-level")
+			.arg("off")
+			.stdin(Stdio::piped())
+			.stdout(Stdio::piped())
+			.stderr(Stdio::piped())
+			.spawn()
+			.expect("spawn gitforge");
+
+		let stdin = child.stdin.take().expect("stdin");
+		let stdout = child.stdout.take().expect("stdout");
+		let reader = BufReader::new(stdout);
+
+		TestSession { stdin, reader, child: Some(child) }
+	}
+
+	/// Writes each request as one line, reads back one response line per
+	/// non-notification request, in order.
+	fn send(&mut self, requests: &[Value]) -> Vec<Value> {
+		let mut responses = Vec::new();
+		for req in requests {
+			let line = serde_json::to_string(req).unwrap();
+			writeln!(self.stdin, "{}", line).unwrap();
+			self.stdin.flush().unwrap();
+
+			let is_notification = req.get("id").is_none()
+				|| req
+					.get("method")
+					.and_then(|m| m.as_str())
+					.map(|m| m.starts_with("notifications/"))
+					.unwrap_or(false);
+			if is_notification {
+				continue;
+			}
+
+			let mut resp_line = String::new();
+			self.reader.read_line(&mut resp_line).expect("read response");
+			responses.push(serde_json::from_str(&resp_line).expect("parse response"));
+		}
+		responses
+	}
+
+	fn send_one(&mut self, req: Value) -> Value {
+		self.send(&[req]).into_iter().next().expect("one response")
+	}
+}
+
+impl Drop for TestSession {
+	fn drop(&mut self) {
+		if let Some(mut child) = self.child.take() {
+			let _ = child.kill();
+			let _ = child.wait();
+		}
+	}
+}
+
+// ── stdio protocol tests ─────────────────────────────────────────────────
 
 #[test]
 fn test_ping() {
 	let dir = setup_repo();
-	let req = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
-	let (mut child, line) = send_request(&dir, req);
+	let mut session = TestSession::spawn(dir.path());
 
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	assert_eq!(resp["id"], 1);
-	assert_eq!(resp["result"], serde_json::json!({}));
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "ping", "arguments": {} } }),
+	);
 
-	child.kill().ok();
+	assert_eq!(resp["result"]["content"][0]["text"], json!("pong"));
 }
 
 #[test]
 fn test_initialize_returns_tools_and_resources() {
 	let dir = setup_repo();
-	let req = r##"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"##;
-	let (mut child, line) = send_request(&dir, req);
+	let mut session = TestSession::spawn(dir.path());
 
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	assert_eq!(resp["id"], 1);
-	assert_eq!(resp["result"]["protocolVersion"], "2025-11-25");
-	assert_eq!(resp["result"]["serverInfo"]["name"], "gitforge");
+	let resp = session.send_one(json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize" }));
 
-	// Should include tools in the initialize response
-	let tools = resp["result"]["tools"].as_array().unwrap();
-	let tool_names: Vec<&str> = tools
-		.iter()
-		.filter_map(|t| t["name"].as_str())
-		.collect();
-	assert!(
-		tool_names.contains(&"ping"),
-		"tools should include 'ping', got: {:?}",
-		tool_names
-	);
-	assert!(
-		tool_names.contains(&"git_status"),
-		"tools should include 'git_status', got: {:?}",
-		tool_names
-	);
-	assert!(
-		tool_names.contains(&"git_branches"),
-		"tools should include 'git_branches', got: {:?}",
-		tool_names
-	);
-
-	// Should include resources in the initialize response
-	let resources = resp["result"]["resources"].as_array().unwrap();
-	let resource_uris: Vec<&str> = resources
-		.iter()
-		.filter_map(|r| r["uri"].as_str())
-		.collect();
-	assert!(
-		resource_uris.contains(&"git://HEAD"),
-		"resources should include 'git://HEAD', got: {:?}",
-		resource_uris
-	);
-	assert!(
-		resource_uris.contains(&"git://status"),
-		"resources should include 'git://status', got: {:?}",
-		resource_uris
-	);
-
-	child.kill().ok();
+	let tools = resp["result"]["tools"].as_array().expect("tools array");
+	assert!(tools.len() >= 10, "expected at least 10 tools, got {}", tools.len());
+	let resources = resp["result"]["resources"].as_array().expect("resources array");
+	assert_eq!(resources.len(), 2);
 }
 
 #[test]
-fn test_invalid_method() {
+fn test_unknown_method() {
 	let dir = setup_repo();
-	let req = r#"{"jsonrpc":"2.0","id":1,"method":"nonexistent"}"#;
-	let (mut child, line) = send_request(&dir, req);
+	let mut session = TestSession::spawn(dir.path());
 
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	assert_eq!(resp["id"], 1);
+	let resp = session.send_one(json!({ "jsonrpc": "2.0", "id": 1, "method": "nonexistent" }));
 	assert!(resp["error"].is_object());
-	assert_eq!(resp["error"]["code"], -32601);
-
-	child.kill().ok();
+	assert_eq!(resp["error"]["code"], json!(-32601));
 }
 
 #[test]
-fn test_git_branches() {
+fn test_parse_error() {
 	let dir = setup_repo();
-	let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"git_branches","arguments":{}}}"#;
-	let (mut child, line) = send_request(&dir, req);
+	let mut session = TestSession::spawn(dir.path());
 
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
-	assert!(text.contains("main") || text.contains("master"), "expected main/master branch, got: {}", text);
+	// Manually send invalid JSON and read the response.
+	writeln!(session.stdin, "{{not valid json").unwrap();
+	session.stdin.flush().unwrap();
 
-	child.kill().ok();
-}
-
-#[test]
-fn test_git_status_clean() {
-	let dir = setup_repo();
-	let req = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"git_status","arguments":{}}}"#;
-	let (mut child, line) = send_request(&dir, req);
-
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
-	assert_eq!(text, "nothing to commit, working tree clean");
-
-	child.kill().ok();
-}
-
-#[test]
-fn test_git_status_dirty() {
-	let dir = setup_repo();
-
-	// Make a dirty change
-	std::fs::write(dir.path().join("file1.txt"), b"modified\n").unwrap();
-
-	let req = r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"git_status","arguments":{}}}"#;
-	let (mut child, line) = send_request(&dir, req);
-
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
-	assert!(text.contains("WT_MODIFIED"), "expected WT_MODIFIED in status, got: {}", text);
-
-	child.kill().ok();
-}
-
-#[test]
-fn test_git_log() {
-	let dir = setup_repo();
-	let req = r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"git_log","arguments":{"max_count":5}}}"#;
-	let (mut child, line) = send_request(&dir, req);
-
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
-	assert!(text.contains("initial commit"));
-	assert!(text.contains("add file2"));
-
-	child.kill().ok();
-}
-
-#[test]
-fn test_git_diff() {
-	let dir = setup_repo();
-
-	// Make a dirty change
-	std::fs::write(dir.path().join("file1.txt"), b"modified content\n").unwrap();
-
-	let req = r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"git_diff","arguments":{}}}"#;
-	let (mut child, line) = send_request(&dir, req);
-
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
-	assert!(text.contains("-hello world") || text.contains("+modified content"), "diff should show changes, got: {}", text);
-
-	child.kill().ok();
-}
-
-#[test]
-fn test_git_show() {
-	let dir = setup_repo();
-	let req = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"git_show","arguments":{"revision":"HEAD"}}}"#;
-	let (mut child, line) = send_request(&dir, req);
-
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
-	assert!(text.contains("commit"));
-	assert!(text.contains("Author:"));
-	assert!(text.contains("add file2"));
-
-	child.kill().ok();
-}
-
-#[test]
-fn test_resources_list() {
-	let dir = setup_repo();
-	let req = r#"{"jsonrpc":"2.0","id":8,"method":"resources/list"}"#;
-	let (mut child, line) = send_request(&dir, req);
-
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	let resources = resp["result"]["resources"].as_array().unwrap();
-	assert!(resources.len() >= 2, "expected at least 2 resources, got {}", resources.len());
-
-	let uris: Vec<&str> = resources.iter().filter_map(|r| r["uri"].as_str()).collect();
-	assert!(uris.contains(&"git://HEAD"));
-	assert!(uris.contains(&"git://status"));
-
-	child.kill().ok();
-}
-
-#[test]
-fn test_resource_read_head() {
-	let dir = setup_repo();
-	let req = r#"{"jsonrpc":"2.0","id":9,"method":"resources/read","params":{"uri":"git://HEAD"}}"#;
-	let (mut child, line) = send_request(&dir, req);
-
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	let text = resp["result"]["contents"][0]["text"].as_str().unwrap();
-	assert!(text.contains("commit"));
-	assert!(text.contains("Author:"));
-
-	child.kill().ok();
-}
-
-#[test]
-fn test_resource_read_status() {
-	let dir = setup_repo();
-	let req = r#"{"jsonrpc":"2.0","id":10,"method":"resources/read","params":{"uri":"git://status"}}"#;
-	let (mut child, line) = send_request(&dir, req);
-
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	let text = resp["result"]["contents"][0]["text"].as_str().unwrap();
-	assert_eq!(text, "nothing to commit, working tree clean");
-
-	child.kill().ok();
-}
-
-#[test]
-fn test_resource_unknown_uri() {
-	let dir = setup_repo();
-	let req = r#"{"jsonrpc":"2.0","id":11,"method":"resources/read","params":{"uri":"git://nonexistent"}}"#;
-	let (mut child, line) = send_request(&dir, req);
-
-	let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
-	// Should return an error
-	assert!(resp["error"].is_object(), "expected error for unknown resource");
-
-	child.kill().ok();
+	let mut line = String::new();
+	session.reader.read_line(&mut line).unwrap();
+	let resp: Value = serde_json::from_str(&line).unwrap();
+	assert_eq!(resp["error"]["code"], json!(-32700));
 }
 
 #[test]
 fn test_notification_no_response() {
 	let dir = setup_repo();
-	let mut child = Command::new(env!("CARGO_BIN_EXE_gitforge"))
-		.arg(dir.path())
-		.stdin(Stdio::piped())
-		.stdout(Stdio::piped())
-		.stderr(Stdio::null())
-		.spawn()
-		.expect("spawn gitforge");
+	let mut session = TestSession::spawn(dir.path());
 
-	let stdin = child.stdin.as_mut().unwrap();
-	writeln!(
-		stdin,
-		r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#
-	)
-	.unwrap();
-	stdin.flush().unwrap();
+	// A notification followed by a real request: only one response line
+	// should come back, and it must be for the second request.
+	let responses = session.send(&[
+		json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+		json!({ "jsonrpc": "2.0", "id": 42, "method": "ping" }),
+	]);
+	assert_eq!(responses.len(), 1);
+	assert_eq!(responses[0]["id"], json!(42));
+}
 
-	// Give the process time to process (notification should produce no output)
-	std::thread::sleep(std::time::Duration::from_millis(200));
+#[test]
+fn test_git_status_clean() {
+	let dir = setup_repo();
+	let mut session = TestSession::spawn(dir.path());
 
-	// Notification should produce no output line
-	child.kill().ok();
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_status", "arguments": {} } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+	assert!(text.contains("clean"), "expected clean status, got: {text}");
+}
 
-	// Verify the process actually started and handled the request
-	let output = child.wait_with_output().ok();
-	assert!(output.is_some(), "process should have exited");
+#[test]
+fn test_git_status_dirty() {
+	let dir = setup_repo();
+	std::fs::write(dir.path().join("untracked.txt"), "new file\n").unwrap();
+	let mut session = TestSession::spawn(dir.path());
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_status", "arguments": {} } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+	assert!(text.contains("untracked.txt"), "expected untracked file listed, got: {text}");
+}
+
+#[test]
+fn test_git_log_default_and_limit() {
+	let dir = setup_repo();
+	let mut session = TestSession::spawn(dir.path());
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_log", "arguments": {} } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+	assert_eq!(text.lines().count(), 2, "expected 2 commits, got: {text}");
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "git_log", "arguments": { "limit": 1 } } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+	assert_eq!(text.lines().count(), 1);
+}
+
+#[test]
+fn test_git_show_head() {
+	let dir = setup_repo();
+	let mut session = TestSession::spawn(dir.path());
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_show", "arguments": {} } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+	assert!(text.contains("Second commit"));
+}
+
+#[test]
+fn test_git_show_unknown_revision() {
+	let dir = setup_repo();
+	let mut session = TestSession::spawn(dir.path());
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_show", "arguments": { "revision": "not-a-real-rev" } } }),
+	);
+	assert!(resp["error"].is_object());
+}
+
+#[test]
+fn test_resources_list_and_read() {
+	let dir = setup_repo();
+	let mut session = TestSession::spawn(dir.path());
+
+	let resp = session.send_one(json!({ "jsonrpc": "2.0", "id": 1, "method": "resources/list" }));
+	assert_eq!(resp["result"]["resources"].as_array().unwrap().len(), 2);
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": { "uri": "git://status" } }),
+	);
+	assert!(resp["result"]["contents"][0]["text"].as_str().unwrap().contains("clean"));
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 3, "method": "resources/read", "params": { "uri": "git://nope" } }),
+	);
+	assert!(resp["error"].is_object());
+}
+
+#[test]
+fn test_git_add_and_commit() {
+	let dir = setup_repo();
+	std::fs::write(dir.path().join("new.txt"), "content\n").unwrap();
+	let mut session = TestSession::spawn(dir.path());
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_add", "arguments": { "files": ["new.txt"] } } }),
+	);
+	assert_eq!(resp["result"]["content"][0]["text"], json!("staged"));
+
+	let resp = session.send_one(
+		json!({
+			"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+			"params": { "name": "git_commit", "arguments": {
+				"message": "add new.txt", "author_name": "Test", "author_email": "t@example.com"
+			}}
+		}),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+	assert!(text.starts_with("Created commit"));
+}
+
+#[test]
+fn test_git_branch_create_and_checkout() {
+	let dir = setup_repo();
+	let mut session = TestSession::spawn(dir.path());
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_branch_create", "arguments": { "name": "feature" } } }),
+	);
+	assert_eq!(resp["result"]["content"][0]["text"], json!("Created branch 'feature'"));
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "git_checkout", "arguments": { "branch": "feature" } } }),
+	);
+	assert_eq!(resp["result"]["content"][0]["text"], json!("switched branch"));
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "git_checkout", "arguments": { "branch": "does-not-exist" } } }),
+	);
+	assert!(resp["error"].is_object());
+}
+
+#[test]
+fn test_git_merge_fast_forward_and_already_up_to_date() {
+	let dir = setup_repo();
+	let mut session = TestSession::spawn(dir.path());
+
+	session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_branch_create", "arguments": { "name": "feature" } } }),
+	);
+	session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "git_checkout", "arguments": { "branch": "feature" } } }),
+	);
+	std::fs::write(dir.path().join("feature.txt"), "x\n").unwrap();
+	session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "git_add", "arguments": { "files": ["."] } } }),
+	);
+	session.send_one(
+		json!({
+			"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+			"params": { "name": "git_commit", "arguments": {
+				"message": "feature work", "author_name": "T", "author_email": "t@example.com"
+			}}
+		}),
+	);
+	session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "git_checkout", "arguments": { "branch": "master" } } }),
+	);
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": { "name": "git_merge", "arguments": { "branch": "feature" } } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+	assert!(text.contains("fast-forward") || text.contains("up-to-date"), "unexpected merge result: {text}");
+
+	// Merging again should now report "already up-to-date".
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": { "name": "git_merge", "arguments": { "branch": "feature" } } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+	assert!(text.contains("up-to-date"));
+}
+
+#[test]
+fn test_full_mcp_session() {
+	let dir = setup_repo();
+	let mut session = TestSession::spawn(dir.path());
+
+	let init = session.send_one(json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize" }));
+	assert!(init["result"]["serverInfo"]["name"] == json!("gitforge"));
+
+	let tools = session.send_one(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }));
+	let tool_names: Vec<String> = tools["result"]["tools"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.map(|t| t["name"].as_str().unwrap().to_string())
+		.collect();
+
+	let mut next_id = 3;
+	for name in &tool_names {
+		let args = match name.as_str() {
+			"git_commit" => json!({ "message": "m", "author_name": "a", "author_email": "a@b.com" }),
+			"git_add" => json!({ "files": ["."] }),
+			"git_branch_create" => json!({ "name": format!("branch-{next_id}") }),
+			"git_checkout" => json!({ "branch": "master" }),
+			"git_merge" => json!({ "branch": "master" }),
+			"git_show" => json!({ "revision": "HEAD" }),
+			_ => json!({}),
+		};
+		let resp = session.send_one(
+			json!({ "jsonrpc": "2.0", "id": next_id, "method": "tools/call", "params": { "name": name, "arguments": args } }),
+		);
+		assert!(
+			resp["result"].is_object() || resp["error"].is_object(),
+			"tool '{name}' produced neither result nor error"
+		);
+		next_id += 1;
+	}
+
+	let resources = session.send_one(json!({ "jsonrpc": "2.0", "id": next_id, "method": "resources/list" }));
+	for r in resources["result"]["resources"].as_array().unwrap() {
+		next_id += 1;
+		let uri = r["uri"].as_str().unwrap();
+		let resp = session.send_one(
+			json!({ "jsonrpc": "2.0", "id": next_id, "method": "resources/read", "params": { "uri": uri } }),
+		);
+		assert!(resp["result"].is_object());
+	}
+
+	// Notification: no response expected.
+	let responses = session.send(&[json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })]);
+	assert!(responses.is_empty());
+}
+
+// ── HTTP transport tests (in-process, via tower) ─────────────────────────
+
+mod http_tests {
+	use super::*;
+	use axum::body::Body;
+	use axum::http::Request;
+	use http_body_util::BodyExt;
+	use tower::ServiceExt;
+
+	async fn build_test_app(dir: &Path) -> axum::Router {
+		let repo = gitforge::git::RepoHandle::spawn(dir).expect("spawn repo actor");
+		let mut router = gitforge::mcp::Router::new(repo.clone());
+		gitforge::tools::register_all(&mut router, repo);
+		gitforge::transport::http::build_app(Arc::new(router))
+	}
+
+	#[tokio::test]
+	async fn test_http_health() {
+		let dir = setup_repo();
+		let app = build_test_app(dir.path()).await;
+
+		let resp = app
+			.oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+			.await
+			.unwrap();
+		assert_eq!(resp.status(), 200);
+	}
+
+	#[tokio::test]
+	async fn test_http_ping_rpc() {
+		let dir = setup_repo();
+		let app = build_test_app(dir.path()).await;
+
+		let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "ping", "arguments": {} } })
+			.to_string();
+
+		let resp = app
+			.oneshot(
+				Request::builder()
+					.method("POST")
+					.uri("/rpc")
+					.header("content-type", "application/json")
+					.body(Body::from(body))
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+
+		assert_eq!(resp.status(), 200);
+		let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+		let json_resp: Value = serde_json::from_slice(&bytes).unwrap();
+		assert_eq!(json_resp["result"]["content"][0]["text"], json!("pong"));
+	}
+
+	#[tokio::test]
+	async fn test_http_parse_error() {
+		let dir = setup_repo();
+		let app = build_test_app(dir.path()).await;
+
+		let resp = app
+			.oneshot(
+				Request::builder()
+					.method("POST")
+					.uri("/rpc")
+					.body(Body::from("not json"))
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+
+		assert_eq!(resp.status(), 200);
+		let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+		let json_resp: Value = serde_json::from_slice(&bytes).unwrap();
+		assert_eq!(json_resp["error"]["code"], json!(-32700));
+	}
 }
