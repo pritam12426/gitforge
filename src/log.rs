@@ -4,6 +4,7 @@ use std::fs::OpenOptions;
 use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
+#[cfg(feature = "log-timestamp")]
 use std::time::SystemTime;
 
 #[repr(u8)]
@@ -61,8 +62,6 @@ struct LoggerInner {
 	level: Level,
 	writer: Box<dyn Write + Send>,
 	use_color: bool,
-	show_ts: bool,
-	show_src: bool,
 }
 
 static LOGGER: OnceLock<Mutex<LoggerInner>> = OnceLock::new();
@@ -73,19 +72,11 @@ fn logger() -> &'static Mutex<LoggerInner> {
 			level: Level::Info,
 			writer: Box::new(std::io::stderr()),
 			use_color: std::io::stderr().is_terminal(),
-			show_ts: true,
-			show_src: true,
 		})
 	})
 }
 
-pub fn init(
-	path: Option<&Path>,
-	level: Level,
-	show_timestamp: bool,
-	show_source: bool,
-	disable_color: bool,
-) {
+pub fn init(path: Option<&Path>, level: Level) {
 	let (writer, use_color) = match path {
 		Some(p) => match OpenOptions::new().append(true).create(true).open(p) {
 			Ok(f) => (Box::new(f) as Box<dyn Write + Send>, false),
@@ -107,14 +98,10 @@ pub fn init(
 		),
 	};
 
-	let use_color = if disable_color { false } else { use_color };
-
 	let mut inner = logger().lock().unwrap();
 	inner.writer = writer;
 	inner.use_color = use_color;
 	inner.level = level;
-	inner.show_ts = show_timestamp;
-	inner.show_src = show_source;
 }
 
 pub fn set_level(level: Level) {
@@ -129,31 +116,68 @@ pub fn use_color() -> bool {
 	logger().lock().unwrap().use_color
 }
 
-pub fn set_show_timestamp(v: bool) {
-	logger().lock().unwrap().show_ts = v;
-}
-
-pub fn set_show_source(v: bool) {
-	logger().lock().unwrap().show_src = v;
-}
-
 pub fn set_color(v: bool) {
 	logger().lock().unwrap().use_color = v;
 }
 
+#[cfg(feature = "log-timestamp")]
+fn is_leap(y: i64) -> bool {
+	(y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+#[cfg(feature = "log-timestamp")]
+fn days_to_date(days: u64) -> (u64, u64, u64) {
+	let mut y: i64 = 1970;
+	let mut d = days as i64;
+
+	loop {
+		let days_in_year = if is_leap(y) { 366 } else { 365 };
+		if d < days_in_year {
+			break;
+		}
+		d -= days_in_year;
+		y += 1;
+	}
+
+	let months = [
+		31,
+		if is_leap(y) { 29 } else { 28 },
+		31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+	];
+	let mut m = 1;
+	for &md in &months {
+		if d < md {
+			break;
+		}
+		d -= md;
+		m += 1;
+	}
+
+	(y as u64, m, (d + 1) as u64)
+}
+
+#[cfg(feature = "log-timestamp")]
 fn format_timestamp() -> String {
 	let dur = SystemTime::now()
 		.duration_since(SystemTime::UNIX_EPOCH)
 		.unwrap_or_default();
-	let secs = dur.as_secs() % 86400;
-	let h = secs / 3600;
-	let m = (secs % 3600) / 60;
-	let s = secs % 60;
+	let total_secs = dur.as_secs();
+	let days = total_secs / 86400;
+	let remaining = total_secs % 86400;
+	let h = remaining / 3600;
+	let m = (remaining % 3600) / 60;
+	let s = remaining % 60;
 	let us = dur.subsec_micros();
-	format!("[{:02}:{:02}:{:02}.{:06}] ", h, m, s, us)
+	let (y, mon, d) = days_to_date(days);
+	let mon_abbr = match mon {
+		1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr", 5 => "May", 6 => "Jun",
+		7 => "Jul", 8 => "Aug", 9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+		_ => "???",
+	};
+	format!("[{:02}-{}-{} {:02}:{:02}:{:02}.{:06}] ", d, mon_abbr, y, h, m, s, us)
 }
 
-pub fn __log_impl(level: Level, file: &str, line: u32, args: fmt::Arguments<'_>, newline: bool) {
+pub fn __log_impl(level: Level, _file: &str, _line: u32, args: fmt::Arguments<'_>, newline: bool) {
 	let mut inner = logger().lock().unwrap();
 	if level > inner.level {
 		return;
@@ -161,14 +185,15 @@ pub fn __log_impl(level: Level, file: &str, line: u32, args: fmt::Arguments<'_>,
 
 	let color = inner.use_color;
 
-	if inner.show_ts && color {
-		let _ = write!(inner.writer, "\x1b[2m");
-	}
-	if inner.show_ts {
+	#[cfg(feature = "log-timestamp")]
+	{
+		if color {
+			let _ = write!(inner.writer, "\x1b[2m");
+		}
 		let _ = write!(inner.writer, "{}", format_timestamp());
-	}
-	if inner.show_ts && color {
-		let _ = write!(inner.writer, "\x1b[0m");
+		if color {
+			let _ = write!(inner.writer, "\x1b[0m");
+		}
 	}
 
 	if color {
@@ -185,14 +210,15 @@ pub fn __log_impl(level: Level, file: &str, line: u32, args: fmt::Arguments<'_>,
 		let _ = write!(inner.writer, "[{:<5}] ", level.label());
 	}
 
-	if inner.show_src && color {
-		let _ = write!(inner.writer, "\x1b[2m");
-	}
-	if inner.show_src {
-		let _ = write!(inner.writer, "[{}:{}] ", file, line);
-	}
-	if inner.show_src && color {
-		let _ = write!(inner.writer, "\x1b[0m");
+	#[cfg(feature = "log-source")]
+	{
+		if color {
+			let _ = write!(inner.writer, "\x1b[2m");
+		}
+		let _ = write!(inner.writer, "[{}:{}] ", _file, _line);
+		if color {
+			let _ = write!(inner.writer, "\x1b[0m");
+		}
 	}
 
 	let _ = write!(inner.writer, "{}", args);

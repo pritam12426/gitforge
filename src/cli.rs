@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "gitforge", about = "Git MCP server")]
+#[command(name = "gitforge", about = "Git MCP server", color = clap::ColorChoice::Auto)]
 pub struct Args {
 	/// Path to the Git repository (defaults to current directory)
 	#[arg(default_value = ".")]
@@ -17,21 +17,9 @@ pub struct Args {
 	#[arg(long)]
 	pub log_file: Option<PathBuf>,
 
-	/// Minimum log level [off, fatal, error, warn, info, debug, trace]
+	/// Set log level
 	#[arg(long, short, default_value = "info")]
 	pub log_level: crate::log::Level,
-
-	/// Disable ANSI color output
-	#[arg(long)]
-	pub no_color: bool,
-
-	/// Suppress timestamps in log output
-	#[arg(long)]
-	pub no_timestamp: bool,
-
-	/// Suppress source location [file:line] in log output
-	#[arg(long)]
-	pub no_source: bool,
 }
 
 impl Args {
