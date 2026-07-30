@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 use std::sync::mpsc::Receiver;
 
 use crate::error::GitforgeError;

@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 //! gitforge's structured logger.
 //!
 //! Kept as a hand-rolled logger rather than switching to `tracing`: the
@@ -44,6 +50,7 @@ mod color {
 	pub const BOLD_BLUE: &str = "\x1b[1;34m";
 	pub const BOLD_MAGENTA: &str = "\x1b[1;35m";
 	pub const BOLD_CYAN: &str = "\x1b[1;36m";
+	#[allow(dead_code)]
 	pub const DIM: &str = "\x1b[2m";
 }
 

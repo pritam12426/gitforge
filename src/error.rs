@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 //! Error types for gitforge.
 //!
 //! One top-level enum (`GitforgeError`) flows through the actor channel

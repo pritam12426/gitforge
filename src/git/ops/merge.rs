@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 use crate::error::GitforgeError;
 use crate::git::commands::RepoResponse;
 use crate::log_trace;
@@ -31,7 +37,6 @@ pub fn run(repo: &git2::Repository, branch: &str) -> Result<RepoResponse, Gitfor
 	let mut index = repo.merge_trees(&base_tree, &head_tree, &other_tree, None)?;
 	if index.has_conflicts() {
 		log_trace!("ops::merge: conflicts with '{}'", branch);
-		index.write()?;
 		return Err(GitforgeError::OperationFailed(format!(
 			"merge conflicts with '{}'",
 			branch

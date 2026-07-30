@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 pub mod cli;
 pub mod error;
 pub mod git;

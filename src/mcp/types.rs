@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]

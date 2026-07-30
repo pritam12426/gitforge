@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 use crate::error::GitforgeError;
 use crate::git::commands::RepoResponse;
 use crate::log_trace;
@@ -12,11 +18,12 @@ pub fn run(
 	revwalk.push_head()?;
 	revwalk.set_sorting(git2::Sort::TIME)?;
 
+	if offset > 0 {
+		revwalk.nth(offset - 1);
+	}
+
 	let mut entries = Vec::new();
-	for (i, oid) in revwalk.enumerate() {
-		if i < offset {
-			continue;
-		}
+	for oid in revwalk {
 		if entries.len() >= max_count {
 			break;
 		}

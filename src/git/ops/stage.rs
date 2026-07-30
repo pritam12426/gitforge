@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 use crate::error::GitforgeError;
 use crate::git::commands::RepoResponse;
 use crate::log_trace;

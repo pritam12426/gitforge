@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 use serde_json::json;
 
 use crate::git::{RepoCommand, RepoHandle, RepoResponse};

@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 use std::io::Write;
 
 use crate::error::GitforgeError;
@@ -26,7 +32,7 @@ pub fn run(repo: &git2::Repository, target: &str) -> Result<RepoResponse, Gitfor
 		true
 	})?;
 
-	let text = String::from_utf8_lossy(&output).to_string();
+	let text = String::from_utf8(output).unwrap();
 	log_trace!("ops::diff_target: {} bytes diff output", text.len());
 	Ok(RepoResponse::Diff(text))
 }

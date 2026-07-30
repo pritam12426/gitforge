@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 //! The git actor: `git2::Repository` is `!Sync`, so all access happens on
 //! one dedicated thread (`actor.rs`) that owns the repo and processes
 //! `RepoCommand`s one at a time. Everything else in the crate talks to it

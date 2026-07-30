@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 //! One file per tool (split out of what used to be a single 435-line
 //! `tools/mod.rs`), all sharing the [`call_actor`] helper below so each
 //! tool body only has to describe *its* request/response shape instead

@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 //! Integration tests.
 
 use std::io::{BufRead, BufReader, Write};

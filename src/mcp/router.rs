@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
@@ -317,19 +323,7 @@ impl Router {
 			"router: resources/list — {} resources",
 			self.resources.len()
 		);
-		let list: Vec<serde_json::Value> = self
-			.resources
-			.iter()
-			.map(|r| {
-				json!({
-					"uri": r.uri,
-					"name": r.name,
-					"description": r.description,
-					"mimeType": r.mime_type,
-				})
-			})
-			.collect();
-		Ok(json!({ "resources": list }))
+		Ok(json!({ "resources": self.resource_list_json() }))
 	}
 
 	fn resource_list_json(&self) -> Vec<serde_json::Value> {

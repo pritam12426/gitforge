@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 //! `log_*!` macros. `#[macro_export]` places these at the crate root
 //! (`$crate::log_info!`, etc) regardless of this file's module path —
 //! moving the logger into `src/logging/` did not change any call sites

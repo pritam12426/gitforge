@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Pritam
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 use std::io::Write;
 
 use crate::error::GitforgeError;
@@ -26,7 +32,7 @@ pub fn run(repo: &git2::Repository, revision: &str) -> Result<RepoResponse, Gitf
 		let _ = write!(diff_output, "{}{}", origin, content);
 		true
 	})?;
-	let diff_text = String::from_utf8_lossy(&diff_output).to_string();
+	let diff_text = String::from_utf8(diff_output).unwrap();
 
 	log_trace!(
 		"ops::show: hash={} author={} diff={}b",
