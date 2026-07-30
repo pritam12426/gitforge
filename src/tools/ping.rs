@@ -1,12 +1,18 @@
 use serde_json::json;
 
-use crate::mcp::Router;
+use crate::mcp::{ToolAnnotations, Router};
+use crate::log_trace;
 
 pub fn register(router: &mut Router) {
+	log_trace!("tools: registering ping");
 	router.add_tool(
 		"ping",
 		"Check if the server is alive",
 		json!({ "type": "object", "properties": {} }),
-		Box::new(|_| Ok(json!("pong"))),
+		ToolAnnotations::read_only(),
+		Box::new(|_| {
+			log_trace!("tools::ping: handling request");
+			Ok(json!("pong"))
+		}),
 	);
 }

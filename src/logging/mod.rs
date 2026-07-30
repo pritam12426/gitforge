@@ -123,7 +123,7 @@ fn logger() -> &'static Mutex<LoggerState> {
 	LOGGER.get_or_init(|| {
 		Mutex::new(LoggerState {
 			stream: None,
-			level: LogLevel::Info,
+			level: LogLevel::Warn,
 			use_color: false,
 			format: LogFormat::Pretty,
 		})

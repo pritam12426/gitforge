@@ -1,5 +1,6 @@
 use crate::error::GitforgeError;
 use crate::git::commands::RepoResponse;
+use crate::log_trace;
 
 pub fn run(
 	repo: &git2::Repository,
@@ -7,6 +8,7 @@ pub fn run(
 	author_name: &str,
 	author_email: &str,
 ) -> Result<RepoResponse, GitforgeError> {
+	log_trace!("ops::commit: author='{}' msg_len={}", author_name, message.len());
 	let mut index = repo.index()?;
 	index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
 	index.write()?;
@@ -24,5 +26,6 @@ pub fn run(
 		&[&parent_commit],
 	)?;
 
+	log_trace!("ops::commit: created {}", commit_id);
 	Ok(RepoResponse::CommitCreated(commit_id.to_string()))
 }

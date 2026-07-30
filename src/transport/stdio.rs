@@ -4,7 +4,7 @@ use crate::error::GitforgeError;
 use crate::logging::{next_request_id, truncate_for_log};
 use crate::mcp::types::{JsonRpcRequest, JsonRpcResponse};
 use crate::mcp::Router;
-use crate::{log_debug, log_error, log_info, log_warn};
+use crate::{log_debug, log_error, log_info, log_trace, log_warn};
 
 pub fn run(router: &Router) -> Result<(), GitforgeError> {
 	log_info!("transport(stdio): starting read loop");
@@ -14,6 +14,7 @@ pub fn run(router: &Router) -> Result<(), GitforgeError> {
 	for line in stdin.lock().lines() {
 		let line = line?;
 		if line.trim().is_empty() {
+			log_trace!("transport(stdio): skipping empty line");
 			continue;
 		}
 
@@ -24,8 +25,11 @@ pub fn run(router: &Router) -> Result<(), GitforgeError> {
 			truncate_for_log(&line, 300)
 		);
 
-		let request: JsonRpcRequest = match serde_json::from_str(&line) {
-			Ok(r) => r,
+		let request: JsonRpcRequest = match serde_json::from_str::<JsonRpcRequest>(&line) {
+			Ok(r) => {
+				log_trace!("transport(stdio)[req={}]: parsed method='{}'", req_id, r.method);
+				r
+			}
 			Err(e) => {
 				log_warn!("transport(stdio)[req={}]: parse error: {}", req_id, e);
 				let resp = JsonRpcResponse::error(None, -32700, format!("parse error: {}", e));

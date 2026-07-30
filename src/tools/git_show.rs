@@ -1,11 +1,13 @@
 use serde_json::json;
 
 use crate::git::{RepoCommand, RepoHandle, RepoResponse};
-use crate::mcp::Router;
+use crate::mcp::{ToolAnnotations, Router};
+use crate::log_trace;
 
 use super::{call_actor, unexpected};
 
 pub fn register(router: &mut Router, repo: RepoHandle) {
+	log_trace!("tools: registering git_show");
 	router.add_tool(
 		"git_show",
 		"Show details of a commit (hash, author, message, diff)",
@@ -19,9 +21,11 @@ pub fn register(router: &mut Router, repo: RepoHandle) {
 				}
 			}
 		}),
+		ToolAnnotations::read_only(),
 		Box::new(move |args| {
 			let revision =
 				args.get("revision").and_then(|v| v.as_str()).unwrap_or("HEAD").to_string();
+			log_trace!("tools::git_show: revision='{}'", revision);
 
 			let resp = call_actor(&repo, |respond| RepoCommand::ShowCommit { revision, respond })?;
 			match resp {
@@ -53,6 +57,7 @@ pub fn register(router: &mut Router, repo: RepoHandle) {
 						output.push_str(diff);
 					}
 
+					log_trace!("tools::git_show: hash={} author={}", hash, author);
 					Ok(json!(output))
 				}
 				_ => Err(unexpected("git_show")),

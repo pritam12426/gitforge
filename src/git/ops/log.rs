@@ -1,11 +1,13 @@
 use crate::error::GitforgeError;
 use crate::git::commands::RepoResponse;
+use crate::log_trace;
 
 pub fn run(
 	repo: &git2::Repository,
 	offset: usize,
 	max_count: usize,
 ) -> Result<RepoResponse, GitforgeError> {
+	log_trace!("ops::log: offset={} max_count={}", offset, max_count);
 	let mut revwalk = repo.revwalk()?;
 	revwalk.push_head()?;
 	revwalk.set_sorting(git2::Sort::TIME)?;
@@ -27,5 +29,6 @@ pub fn run(
 		entries.push((hash, author, subject));
 	}
 
+	log_trace!("ops::log: returning {} entries", entries.len());
 	Ok(RepoResponse::Log(entries))
 }

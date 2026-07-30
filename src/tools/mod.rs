@@ -20,8 +20,10 @@ use std::sync::mpsc;
 use crate::error::GitforgeError;
 use crate::git::{recv_response, RepoCommand, RepoHandle, RepoResponse};
 use crate::mcp::Router;
+use crate::log_trace;
 
 pub fn register_all(router: &mut Router, repo: RepoHandle) {
+	log_trace!("tools: registering all tool handlers");
 	ping::register(router);
 	git_status::register(router, repo.clone());
 	git_log::register(router, repo.clone());
@@ -33,6 +35,7 @@ pub fn register_all(router: &mut Router, repo: RepoHandle) {
 	git_branch_create::register(router, repo.clone());
 	git_checkout::register(router, repo.clone());
 	git_merge::register(router, repo);
+	log_trace!("tools: all tool handlers registered");
 }
 
 /// Sends one command to the repo actor and waits for its response.

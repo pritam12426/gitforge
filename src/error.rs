@@ -32,6 +32,10 @@ pub enum GitforgeError {
 	#[error("operation failed: {0}")]
 	OperationFailed(String),
 
+	/// Path traversal or access to a file outside the allowed repo.
+	#[error("forbidden: {0}")]
+	Forbidden(String),
+
 	/// The repo actor thread is gone (channel disconnected) or a
 	/// request to it timed out.
 	#[error("actor unavailable: {0}")]
@@ -47,6 +51,7 @@ impl GitforgeError {
 		match self {
 			GitforgeError::NotFound(_) => -32601,     // Method not found
 			GitforgeError::InvalidRequest(_) => -32602, // Invalid params
+			GitforgeError::Forbidden(_) => -32001,     // Server error — access denied
 			GitforgeError::Serde(_) => -32700,        // Parse error
 			_ => -32000,                              // Server error (generic)
 		}

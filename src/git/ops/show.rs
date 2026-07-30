@@ -2,8 +2,10 @@ use std::io::Write;
 
 use crate::error::GitforgeError;
 use crate::git::commands::RepoResponse;
+use crate::log_trace;
 
 pub fn run(repo: &git2::Repository, revision: &str) -> Result<RepoResponse, GitforgeError> {
+	log_trace!("ops::show: revision='{}'", revision);
 	let obj = repo.revparse_single(revision)?;
 	let commit = obj.peel_to_commit()?;
 
@@ -26,6 +28,7 @@ pub fn run(repo: &git2::Repository, revision: &str) -> Result<RepoResponse, Gitf
 	})?;
 	let diff_text = String::from_utf8_lossy(&diff_output).to_string();
 
+	log_trace!("ops::show: hash={} author={} diff={}b", hash, author, diff_text.len());
 	Ok(RepoResponse::ShowCommit(serde_json::json!({
 		"hash": hash,
 		"author": author,

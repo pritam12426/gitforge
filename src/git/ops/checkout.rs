@@ -1,7 +1,9 @@
 use crate::error::GitforgeError;
 use crate::git::commands::RepoResponse;
+use crate::log_trace;
 
 pub fn run(repo: &git2::Repository, branch: &str) -> Result<RepoResponse, GitforgeError> {
+	log_trace!("ops::checkout: branch='{}'", branch);
 	let obj = repo.revparse_single(branch)?;
 	repo.checkout_tree(&obj, None)?;
 
@@ -15,5 +17,6 @@ pub fn run(repo: &git2::Repository, branch: &str) -> Result<RepoResponse, Gitfor
 			repo.set_head_detached(obj.id())?;
 		}
 	}
+	log_trace!("ops::checkout: switched to '{}'", branch);
 	Ok(RepoResponse::CheckoutOk)
 }

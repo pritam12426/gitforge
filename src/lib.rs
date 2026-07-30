@@ -14,7 +14,7 @@ pub fn run(cli: cli::Cli) -> Result<(), Box<dyn std::error::Error>> {
 	let repo = git::RepoHandle::spawn(&cli.repo_path).inspect_err(|e| {
 		log_fatal!("not a git repository at '{}': {e}", cli.repo_path.display());
 	})?;
-	let mut router = mcp::Router::new(repo.clone());
+	let mut router = mcp::Router::new(repo.clone(), cli.allowed_repo);
 	tools::register_all(&mut router, repo);
 
 	transport::stdio::run(&router)?;

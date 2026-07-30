@@ -2,8 +2,10 @@ use std::io::Write;
 
 use crate::error::GitforgeError;
 use crate::git::commands::RepoResponse;
+use crate::log_trace;
 
 pub fn run(repo: &git2::Repository) -> Result<RepoResponse, GitforgeError> {
+	log_trace!("ops::diff: computing working tree diff");
 	let head_tree = repo.head()?.peel_to_tree()?;
 	let diff = repo.diff_tree_to_workdir(Some(&head_tree), None)?;
 
@@ -16,5 +18,6 @@ pub fn run(repo: &git2::Repository) -> Result<RepoResponse, GitforgeError> {
 	})?;
 
 	let text = String::from_utf8_lossy(&output).to_string();
+	log_trace!("ops::diff: {} bytes diff output", text.len());
 	Ok(RepoResponse::Diff(text))
 }

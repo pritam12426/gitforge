@@ -1,6 +1,6 @@
 use crate::error::GitforgeError;
 use crate::git::{recv_response, RepoCommand, RepoHandle, RepoResponse};
-use crate::{log_debug, log_error};
+use crate::{log_error, log_trace};
 
 #[derive(Clone)]
 pub struct Resource {
@@ -28,14 +28,15 @@ pub fn builtin_resources() -> Vec<Resource> {
 }
 
 pub fn fetch_content(repo: &RepoHandle, uri: &str) -> Result<String, GitforgeError> {
-	log_debug!("resources: fetching '{}'", uri);
+	log_trace!("resources: fetching '{}'", uri);
 	let result = match uri {
 		"git://HEAD" => fetch_head_info(repo),
 		"git://status" => fetch_status(repo),
 		other => Err(GitforgeError::NotFound(format!("unknown resource: {}", other))),
 	};
-	if let Err(e) = &result {
-		log_error!("resources: '{}' failed: {}", uri, e);
+	match &result {
+		Ok(text) => log_trace!("resources: '{}' returned {} bytes", uri, text.len()),
+		Err(e) => log_error!("resources: '{}' failed: {}", uri, e),
 	}
 	result
 }
