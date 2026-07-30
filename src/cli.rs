@@ -11,7 +11,15 @@ use clap::Parser;
 use crate::logging::{LogFormat, LogLevel};
 
 #[derive(Parser)]
-#[command(name = "gitforge", about = "Git MCP server", color = clap::ColorChoice::Auto)]
+#[command(
+	name = "gitforge",
+	version,
+	about = "Git MCP server",
+	color = clap::ColorChoice::Auto,
+	after_help = "\
+Report bugs to: https://github.com/pritam12426/gitforge/issues
+Author: Pritam <84720825+pritam12426@users.noreply.github.com>"
+)]
 pub struct Cli {
 	/// Path to the Git repository (defaults to current directory).
 	/// Can also be set via the GITFORGE_REPO environment variable.
