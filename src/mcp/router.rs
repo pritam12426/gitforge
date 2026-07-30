@@ -44,7 +44,7 @@ impl Router {
 	}
 
 	/// Handles one JSON-RPC request. `req_id` is a correlation id
-	/// allocated by the transport (stdio line / HTTP request), used only
+	/// allocated by the transport (stdio line), used only
 	/// for logging so a single request's log lines can be grepped
 	/// together across transport -> router -> actor.
 	pub fn handle(&self, request: JsonRpcRequest, req_id: u64) -> JsonRpcResponse {

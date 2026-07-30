@@ -9,7 +9,7 @@ use super::ops;
 /// The actor's main loop. Owns the one `git2::Repository` for the
 /// process's lifetime and processes commands strictly one at a time,
 /// which is what makes it safe to hand out `RepoHandle` clones freely
-/// from both the stdio loop and (many, concurrent) HTTP handlers.
+/// from the stdio loop.
 pub fn run(repo: git2::Repository, receiver: Receiver<RepoCommand>) {
 	log_info!("git actor: started, waiting for commands");
 	while let Ok(cmd) = receiver.recv() {

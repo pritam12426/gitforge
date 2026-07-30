@@ -36,14 +36,14 @@ use chrono::Local;
 
 // ── ANSI colour codes ───────────────────────────────────────────────────────
 mod color {
-	pub const RESET: &str = "\x1b[0m";
-	pub const BOLD_RED: &str = "\x1b[1;31m";
-	pub const BOLD_GREEN: &str = "\x1b[1;32m";
-	pub const BOLD_YELLOW: &str = "\x1b[1;33m";
-	pub const BOLD_BLUE: &str = "\x1b[1;34m";
+	pub const RESET:        &str = "\x1b[0m";
+	pub const BOLD_RED:     &str = "\x1b[1;31m";
+	pub const BOLD_GREEN:   &str = "\x1b[1;32m";
+	pub const BOLD_YELLOW:  &str = "\x1b[1;33m";
+	pub const BOLD_BLUE:    &str = "\x1b[1;34m";
 	pub const BOLD_MAGENTA: &str = "\x1b[1;35m";
-	pub const BOLD_CYAN: &str = "\x1b[1;36m";
-	pub const DIM: &str = "\x1b[2m";
+	pub const BOLD_CYAN:    &str = "\x1b[1;36m";
+	pub const DIM:          &str = "\x1b[2m";
 }
 
 // ── Log levels (lower number = higher priority, same as the C enum) ────────
@@ -51,11 +51,11 @@ mod color {
 #[clap(rename_all = "lowercase")]
 #[repr(i32)]
 pub enum LogLevel {
-	Off = 0,
+	Off   = 0,
 	Fatal = 1,
 	Error = 2,
-	Warn = 3,
-	Info = 4,
+	Warn  = 3,
+	Info  = 4,
 	Debug = 5,
 	Trace = 6,
 }
@@ -187,11 +187,11 @@ fn level_label_plain(level: LogLevel) -> &'static str {
 	match level {
 		LogLevel::Fatal => "[FATAL] ",
 		LogLevel::Error => "[ERROR] ",
-		LogLevel::Warn => "[WARN ] ",
-		LogLevel::Info => "[INFO ] ",
+		LogLevel::Warn  => "[WARN ] ",
+		LogLevel::Info  => "[INFO ] ",
 		LogLevel::Debug => "[DEBUG] ",
 		LogLevel::Trace => "[TRACE] ",
-		LogLevel::Off => "[UNKWN] ",
+		LogLevel::Off   => "[UNKWN] ",
 	}
 }
 

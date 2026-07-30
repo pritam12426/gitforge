@@ -1,20 +1,8 @@
 //! Integration tests.
-//!
-//! Two styles, deliberately kept separate:
-//!
-//!   * stdio tests spawn the compiled `gitforge` binary as a subprocess
-//!     and speak line-delimited JSON-RPC over its stdin/stdout — this is
-//!     the only way to genuinely test "is the protocol correct over the
-//!     real transport" and matches how the original test suite worked.
-//!   * HTTP tests build the axum app in-process (via the new `gitforge`
-//!     lib target) and drive it with `tower::ServiceExt::oneshot` — no
-//!     socket, no subprocess, just the `Service` trait — which is only
-//!     possible now that gitforge exposes a lib alongside the binary.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -413,81 +401,4 @@ fn test_full_mcp_session() {
 	// Notification: no response expected.
 	let responses = session.send(&[json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })]);
 	assert!(responses.is_empty());
-}
-
-// ── HTTP transport tests (in-process, via tower) ─────────────────────────
-
-mod http_tests {
-	use super::*;
-	use axum::body::Body;
-	use axum::http::Request;
-	use http_body_util::BodyExt;
-	use tower::ServiceExt;
-
-	async fn build_test_app(dir: &Path) -> axum::Router {
-		let repo = gitforge::git::RepoHandle::spawn(dir).expect("spawn repo actor");
-		let mut router = gitforge::mcp::Router::new(repo.clone());
-		gitforge::tools::register_all(&mut router, repo);
-		gitforge::transport::http::build_app(Arc::new(router))
-	}
-
-	#[tokio::test]
-	async fn test_http_health() {
-		let dir = setup_repo();
-		let app = build_test_app(dir.path()).await;
-
-		let resp = app
-			.oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
-			.await
-			.unwrap();
-		assert_eq!(resp.status(), 200);
-	}
-
-	#[tokio::test]
-	async fn test_http_ping_rpc() {
-		let dir = setup_repo();
-		let app = build_test_app(dir.path()).await;
-
-		let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "ping", "arguments": {} } })
-			.to_string();
-
-		let resp = app
-			.oneshot(
-				Request::builder()
-					.method("POST")
-					.uri("/rpc")
-					.header("content-type", "application/json")
-					.body(Body::from(body))
-					.unwrap(),
-			)
-			.await
-			.unwrap();
-
-		assert_eq!(resp.status(), 200);
-		let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-		let json_resp: Value = serde_json::from_slice(&bytes).unwrap();
-		assert_eq!(json_resp["result"]["content"][0]["text"], json!("pong"));
-	}
-
-	#[tokio::test]
-	async fn test_http_parse_error() {
-		let dir = setup_repo();
-		let app = build_test_app(dir.path()).await;
-
-		let resp = app
-			.oneshot(
-				Request::builder()
-					.method("POST")
-					.uri("/rpc")
-					.body(Body::from("not json"))
-					.unwrap(),
-			)
-			.await
-			.unwrap();
-
-		assert_eq!(resp.status(), 200);
-		let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-		let json_resp: Value = serde_json::from_slice(&bytes).unwrap();
-		assert_eq!(json_resp["error"]["code"], json!(-32700));
-	}
 }

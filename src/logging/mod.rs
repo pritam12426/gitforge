@@ -17,7 +17,7 @@
 //!   * a per-request **correlation id**, so every log line produced while
 //!     handling one JSON-RPC request — transport receipt, tool dispatch,
 //!     actor lifecycle, transport reply — can be grepped out together,
-//!     which matters once stdio and HTTP requests can interleave.
+//!     which matters when requests interleave.
 //!
 //! Compile-time feature gates (`show_time_stamp`, `show_source_location`)
 //! are unchanged from the original design and still compile out entirely
@@ -134,11 +134,10 @@ fn logger() -> &'static Mutex<LoggerState> {
 
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Allocates a new correlation id for one inbound request. Both the stdio
-/// loop and the HTTP handler call this once per request and thread the
-/// result through their log lines (`req_id=<n>`), so a single request's
-/// transport/tool/actor log lines can be grepped out together even when
-/// requests interleave (concurrent HTTP handlers, pipelined stdio).
+/// Allocates a new correlation id for one inbound request. The stdio
+/// loop calls this once per request and threads the result through its
+/// log lines (`req_id=<n>`), so a single request's transport/tool/actor
+/// log lines can be grepped out together even when requests interleave.
 pub fn next_request_id() -> u64 {
 	NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
 }

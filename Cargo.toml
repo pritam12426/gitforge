@@ -13,8 +13,8 @@
 	show_source_location = []
 
 [dependencies]
-	# CLI parsing (both stdio args and the `server` subcommand).
-	clap = { version = "4.6.4", features = ["derive", "env"] }
+	# CLI argument parsing.
+	clap = { version = "4.6.4", features = ["derive"] }
 
 	# Git plumbing — wrapped behind the actor thread in `src/git`.
 	git2 = "0.21.0"
@@ -30,16 +30,6 @@
 	# Optional timestamped logging (see logging/mod.rs).
 	chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
 
-	# HTTP transport (the `gitforge server` subcommand). Only ever
-	# touched when that subcommand is used — stdio mode never spins up
-	# a tokio runtime.
-	axum = "0.7"
-	tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
-
 [dev-dependencies]
 	serde_json = "1.0.151"
 	tempfile = "3"
-	# Lets integration tests drive the axum app in-process (via
-	# `tower::ServiceExt::oneshot`) without binding a real socket.
-	tower = { version = "0.4", features = ["util"] }
-	http-body-util = "0.1"

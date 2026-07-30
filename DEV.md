@@ -4,35 +4,28 @@
 
 ```mermaid
 flowchart LR
-    A[AI Client] -- "stdin/stdout JSON-RPC 2.0" --> B[gitforge stdio]
-    A -- "POST /rpc JSON-RPC 2.0" --> C[gitforge HTTP]
-    B --> D[lib.rs<br/>run(Args)]
-    C --> D
-    D --> E[cli.rs<br/>clap parse]
-    D --> F[logging::<br/>logger + macros]
-    D --> G[transport::stdio::<br/>line-delimited loop]
-    D --> G2[transport::http::<br/>axum server]
-    G --> H[mcp/router.rs]
-    G2 --> H
-    H --> I[tools/*.rs<br/>11 tool handlers]
-    H --> J[mcp/resources.rs<br/>git://HEAD, git://status]
-    I --> K[git/commands.rs<br/>RepoCommand enum]
-    J --> K
-    K --> L[git/actor.rs<br/>dispatch loop]
-    L --> M[git/ops/*.rs<br/>git2 operations]
+    A[AI Client] -- "stdin/stdout JSON-RPC 2.0" --> B[lib.rs<br/>run(Cli)]
+    B --> C[cli.rs<br/>clap parse]
+    B --> D[logging::<br/>logger + macros]
+    B --> E[transport::stdio::<br/>line-delimited loop]
+    E --> F[mcp/router.rs]
+    F --> G[tools/*.rs<br/>11 tool handlers]
+    F --> H[mcp/resources.rs<br/>git://HEAD, git://status]
+    G --> I[git/commands.rs<br/>RepoCommand enum]
+    H --> I
+    I --> J[git/actor.rs<br/>dispatch loop]
+    J --> K[git/ops/*.rs<br/>git2 operations]
 ```
 
 The server parses CLI args, opens the Git repository on a background
 thread via a `RepoHandle` (actor pattern), registers 11 tools and 2
-resources on the `Router`, then starts either the stdio loop or HTTP
-server depending on the subcommand. Each request dispatches through
-the Router to the appropriate handler, which sends a command to the
-Git actor via `mpsc` channels and awaits the response.
+resources on the `Router`, then starts the stdio read loop. Each request
+dispatches through the Router to the appropriate handler, which sends a
+command to the Git actor via `mpsc` channels and awaits the response.
 
 ## Server API (MCP methods)
 
-All methods use JSON-RPC 2.0. In stdio mode it's line-delimited over
-stdin/stdout; in HTTP mode it's `POST /rpc`.
+All methods use line-delimited JSON-RPC 2.0 over stdin/stdout.
 
 ### `initialize`
 
@@ -104,19 +97,6 @@ and input schema.
 `notifications/initialized` and `notifications/cancelled` are accepted
 but produce no response. Unknown methods return error code `-32601`.
 
-### HTTP transport
-
-When running as `gitforge server`, the server exposes two endpoints:
-
-| Endpoint    | Method | Purpose                         |
-| ----------- | ------ | ------------------------------- |
-| `POST /rpc` | POST   | JSON-RPC 2.0 request            |
-| `GET /health` | GET  | Health check — returns `200 OK` with `"ok"` |
-
-The HTTP server reads the request body, deserializes a JSON-RPC request,
-dispatches it via the Router (on a `spawn_blocking` thread), and writes
-the response. Each request gets a unique correlation ID for logging.
-
 ## Build system
 
 ```sh
@@ -144,7 +124,7 @@ src/
 ├── lib.rs              library entrypoint
 ├── main.rs             thin binary wrapper (~8 lines)
 ├── cli.rs              clap CLI argument parsing
-├── error.rs            GitforgeError enum (9 variants)
+├── error.rs            GitforgeError enum (8 variants)
 ├── git/
 │   ├── mod.rs          re-export
 │   ├── actor.rs        actor dispatch loop
@@ -185,10 +165,9 @@ src/
 │   └── git_merge.rs
 ├── transport/
 │   ├── mod.rs          re-export
-│   ├── stdio.rs        stdin/stdout line-delimited loop
-│   └── http.rs         axum server (POST /rpc, GET /health)
+│   └── stdio.rs        stdin/stdout line-delimited loop
 tests/
-└── integration.rs      18 integration tests
+└── integration.rs      15 integration tests
 ```
 
 ## Concurrency
@@ -199,17 +178,13 @@ tests/
   sequentially.
 - **Logger** — `std::sync::Mutex` guards the writer. Lock held for the
   entire format-and-write cycle.
-- **HTTP mode** — tokio multi-thread runtime. Each request is handled
-  by an axum route that calls `spawn_blocking` to invoke the synchronous
-  Router (which communicates with the Git actor). This prevents the
-  synchronous `mpsc::recv()` from blocking the async runtime.
 - **No rate limiting / queuing** — The `mpsc` channel is unbounded;
   rapid-fire requests queue in memory. No request deduplication or
   timeout.
 
 ## Testing
 
-18 integration tests in `tests/integration.rs`:
+15 integration tests in `tests/integration.rs`:
 
 | Test                                          | What it verifies                          |
 | --------------------------------------------- | ----------------------------------------- |
@@ -229,13 +204,10 @@ tests/
 | `test_git_branch_create_and_checkout`         | create branch + switch to it              |
 | `test_git_merge_fast_forward_and_already_up_to_date` | merge two branches twice       |
 | `test_resources_list_and_read`                | read git://HEAD and git://status          |
-| `test_http_health`                            | GET /health → 200                         |
-| `test_http_ping_rpc`                          | POST /rpc ping → valid response           |
-| `test_http_parse_error`                       | POST /rpc malformed → error -32700        |
+| `test_full_mcp_session`                       | end-to-end initialize-ping-tools-resources|
 
 Tests create a temporary Git repo with 2 commits via the `git2` API,
-then either spawn the binary (stdio tests) or use
-`tower::ServiceExt::oneshot` (HTTP tests).
+then spawn the binary using `CARGO_BIN_EXE_gitforge`.
 
 ## Coding conventions
 
@@ -256,17 +228,13 @@ then either spawn the binary (stdio tests) or use
 
 | Crate               | Version    | Purpose                                    |
 | ------------------- | ---------- | ------------------------------------------ |
-| `clap`              | 4.6.4      | CLI argument parsing (features: derive, env)|
+| `clap`              | 4.6.4      | CLI argument parsing                          |
 | `git2`              | 0.21.0     | Git repository access (libgit2 bindings)   |
 | `serde`             | 1.0.229    | JSON serialization                         |
 | `serde_json`        | 1.0.151    | JSON value types                           |
 | `thiserror`         | 2.0.19     | Error enum derive                          |
 | `anyhow`            | 1.0.104    | Error context (minimal use)                |
 | `chrono`            | 0.4 (opt)  | Local-time timestamps (`show_time_stamp`)  |
-| `axum`              | 0.7        | HTTP server                                |
-| `tokio`             | 1          | Async runtime for HTTP mode                |
-| `tower`             | 0.4 (dev)  | Service test harness for HTTP tests        |
-| `http-body-util`    | 0.1 (dev)  | Body utilities for HTTP tests              |
 | `tempfile`          | 3 (dev)    | Temporary repos in integration tests       |
 
 See [DEV_IN_DEPTH.md](DEV_IN_DEPTH.md) for implementation details.
