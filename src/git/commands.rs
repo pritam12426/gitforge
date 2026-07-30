@@ -20,17 +20,60 @@ pub enum RepoResponse {
 }
 
 pub enum RepoCommand {
-	CheckHealth { respond: Respond },
-	GetStatus { respond: Respond },
-	GetLog { offset: usize, max_count: usize, respond: Respond },
-	GetBranches { respond: Respond },
-	GetDiff { respond: Respond },
-	ShowCommit { revision: String, respond: Respond },
-	CreateCommit { message: String, author_name: String, author_email: String, respond: Respond },
-	StageFiles { paths: Vec<String>, respond: Respond },
-	CreateBranch { name: String, revision: String, respond: Respond },
-	Checkout { branch: String, respond: Respond },
-	Merge { branch: String, respond: Respond },
+	CheckHealth {
+		respond: Respond,
+	},
+	GetStatus {
+		respond: Respond,
+	},
+	GetLog {
+		offset: usize,
+		max_count: usize,
+		respond: Respond,
+	},
+	GetBranches {
+		branch_type: String,
+		contains: Option<String>,
+		not_contains: Option<String>,
+		respond: Respond,
+	},
+	GetDiffUnstaged {
+		respond: Respond,
+	},
+	GetDiffStaged {
+		respond: Respond,
+	},
+	GetDiffTarget {
+		target: String,
+		respond: Respond,
+	},
+	ShowCommit {
+		revision: String,
+		respond: Respond,
+	},
+	CreateCommit {
+		message: String,
+		author_name: String,
+		author_email: String,
+		respond: Respond,
+	},
+	StageFiles {
+		paths: Vec<String>,
+		respond: Respond,
+	},
+	CreateBranch {
+		name: String,
+		revision: String,
+		respond: Respond,
+	},
+	Checkout {
+		branch: String,
+		respond: Respond,
+	},
+	Merge {
+		branch: String,
+		respond: Respond,
+	},
 }
 
 impl RepoCommand {
@@ -43,7 +86,9 @@ impl RepoCommand {
 			RepoCommand::GetStatus { .. } => "get_status",
 			RepoCommand::GetLog { .. } => "get_log",
 			RepoCommand::GetBranches { .. } => "get_branches",
-			RepoCommand::GetDiff { .. } => "get_diff",
+			RepoCommand::GetDiffUnstaged { .. } => "get_diff_unstaged",
+			RepoCommand::GetDiffStaged { .. } => "get_diff_staged",
+			RepoCommand::GetDiffTarget { .. } => "get_diff_target",
 			RepoCommand::ShowCommit { .. } => "show_commit",
 			RepoCommand::CreateCommit { .. } => "create_commit",
 			RepoCommand::StageFiles { .. } => "stage_files",

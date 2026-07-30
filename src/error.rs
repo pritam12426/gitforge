@@ -47,13 +47,18 @@ pub enum GitforgeError {
 
 impl GitforgeError {
 	/// Maps this error onto a JSON-RPC 2.0 error code.
+	///
+	/// The mapping follows the JSON-RPC 2.0 specification's standard
+	/// codes where possible (-32600..-32603 for request errors) and
+	/// uses the server-error range (-32000..-32099) for domain-level
+	/// failures (git errors, actor unavailable, internal bugs).
 	pub fn rpc_code(&self) -> i32 {
 		match self {
-			GitforgeError::NotFound(_) => -32601,     // Method not found
+			GitforgeError::NotFound(_) => -32601,       // Method not found
 			GitforgeError::InvalidRequest(_) => -32602, // Invalid params
-			GitforgeError::Forbidden(_) => -32001,     // Server error — access denied
-			GitforgeError::Serde(_) => -32700,        // Parse error
-			_ => -32000,                              // Server error (generic)
+			GitforgeError::Forbidden(_) => -32001,      // Server error — access denied
+			GitforgeError::Serde(_) => -32700,          // Parse error
+			_ => -32000,                                // Server error (generic)
 		}
 	}
 }

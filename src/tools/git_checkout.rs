@@ -1,10 +1,10 @@
 use serde_json::json;
 
 use crate::git::{RepoCommand, RepoHandle, RepoResponse};
-use crate::mcp::{ToolAnnotations, Router};
 use crate::log_trace;
+use crate::mcp::{Router, ToolAnnotations};
 
-use super::{call_actor, required_str, unexpected};
+use super::{call_actor, reject_flag, required_str, unexpected};
 
 pub fn register(router: &mut Router, repo: RepoHandle) {
 	log_trace!("tools: registering git_checkout");
@@ -21,6 +21,7 @@ pub fn register(router: &mut Router, repo: RepoHandle) {
 		ToolAnnotations::mutable(),
 		Box::new(move |args| {
 			let branch = required_str(&args, "branch")?;
+			reject_flag(&branch, "branch")?;
 			log_trace!("tools::git_checkout: branch='{}'", branch);
 
 			let resp = call_actor(&repo, |respond| RepoCommand::Checkout { branch, respond })?;

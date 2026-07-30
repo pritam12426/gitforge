@@ -13,4 +13,4 @@ mod handle;
 mod ops;
 
 pub use commands::{RepoCommand, RepoResponse};
-pub use handle::{recv_response, RepoHandle};
+pub use handle::{RepoHandle, recv_response};

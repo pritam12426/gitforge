@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-linux
+            ext: tar.gz
+          - os: macos-latest
+            target: aarch64-macos
+            ext: tar.gz
+          - os: windows-latest
+            target: x86_64-windows
+            ext: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        run: cargo build --release --features "show_time_stamp,show_source_location"
+
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir -p dist
+          cp target/release/gitforge dist/
+          cd dist
+          tar czf "../gitforge-${{ matrix.target }}.${{ matrix.ext }}" .
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/release/gitforge.exe dist/
+          cd dist
+          7z a "../gitforge-${{ matrix.target }}.${{ matrix.ext }}" .
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: gitforge-${{ matrix.target }}.${{ matrix.ext }}

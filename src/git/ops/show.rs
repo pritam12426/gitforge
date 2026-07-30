@@ -28,7 +28,12 @@ pub fn run(repo: &git2::Repository, revision: &str) -> Result<RepoResponse, Gitf
 	})?;
 	let diff_text = String::from_utf8_lossy(&diff_output).to_string();
 
-	log_trace!("ops::show: hash={} author={} diff={}b", hash, author, diff_text.len());
+	log_trace!(
+		"ops::show: hash={} author={} diff={}b",
+		hash,
+		author,
+		diff_text.len()
+	);
 	Ok(RepoResponse::ShowCommit(serde_json::json!({
 		"hash": hash,
 		"author": author,

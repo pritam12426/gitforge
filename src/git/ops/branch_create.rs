@@ -7,7 +7,11 @@ pub fn run(
 	name: &str,
 	revision: &str,
 ) -> Result<RepoResponse, GitforgeError> {
-	log_trace!("ops::branch_create: name='{}' revision='{}'", name, revision);
+	log_trace!(
+		"ops::branch_create: name='{}' revision='{}'",
+		name,
+		revision
+	);
 	let obj = repo.revparse_single(revision)?;
 	let commit = obj.peel_to_commit()?;
 	repo.branch(name, &commit, false)?;

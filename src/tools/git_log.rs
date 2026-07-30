@@ -1,10 +1,10 @@
 use serde_json::json;
 
 use crate::git::{RepoCommand, RepoHandle, RepoResponse};
-use crate::mcp::{ToolAnnotations, Router};
 use crate::log_trace;
+use crate::mcp::{Router, ToolAnnotations};
 
-use super::{call_actor, unexpected};
+use super::{call_actor, reject_flag, unexpected};
 
 pub fn register(router: &mut Router, repo: RepoHandle) {
 	log_trace!("tools: registering git_log");
@@ -23,6 +23,12 @@ pub fn register(router: &mut Router, repo: RepoHandle) {
 		Box::new(move |args| {
 			let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 			let max_count = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+			if let Some(ts) = args.get("start_timestamp").and_then(|v| v.as_str()) {
+				reject_flag(ts, "start_timestamp")?;
+			}
+			if let Some(ts) = args.get("end_timestamp").and_then(|v| v.as_str()) {
+				reject_flag(ts, "end_timestamp")?;
+			}
 			log_trace!("tools::git_log: offset={} max_count={}", offset, max_count);
 
 			let resp =

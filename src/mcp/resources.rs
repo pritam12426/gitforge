@@ -1,5 +1,5 @@
 use crate::error::GitforgeError;
-use crate::git::{recv_response, RepoCommand, RepoHandle, RepoResponse};
+use crate::git::{RepoCommand, RepoHandle, RepoResponse, recv_response};
 use crate::{log_error, log_trace};
 
 #[derive(Clone)]
@@ -32,7 +32,10 @@ pub fn fetch_content(repo: &RepoHandle, uri: &str) -> Result<String, GitforgeErr
 	let result = match uri {
 		"git://HEAD" => fetch_head_info(repo),
 		"git://status" => fetch_status(repo),
-		other => Err(GitforgeError::NotFound(format!("unknown resource: {}", other))),
+		other => Err(GitforgeError::NotFound(format!(
+			"unknown resource: {}",
+			other
+		))),
 	};
 	match &result {
 		Ok(text) => log_trace!("resources: '{}' returned {} bytes", uri, text.len()),
@@ -43,7 +46,10 @@ pub fn fetch_content(repo: &RepoHandle, uri: &str) -> Result<String, GitforgeErr
 
 fn fetch_head_info(repo: &RepoHandle) -> Result<String, GitforgeError> {
 	let (tx, rx) = std::sync::mpsc::channel();
-	repo.send(RepoCommand::ShowCommit { revision: "HEAD".into(), respond: tx })?;
+	repo.send(RepoCommand::ShowCommit {
+		revision: "HEAD".into(),
+		respond: tx,
+	})?;
 	let resp = recv_response(rx)?;
 	match resp {
 		RepoResponse::ShowCommit(info) => {
@@ -71,7 +77,9 @@ fn fetch_head_info(repo: &RepoHandle) -> Result<String, GitforgeError> {
 			out.push('\n');
 			Ok(out)
 		}
-		_ => Err(GitforgeError::Internal("unexpected actor response for ShowCommit".into())),
+		_ => Err(GitforgeError::Internal(
+			"unexpected actor response for ShowCommit".into(),
+		)),
 	}
 }
 
@@ -84,11 +92,15 @@ fn fetch_status(repo: &RepoHandle) -> Result<String, GitforgeError> {
 			if entries.is_empty() {
 				Ok("nothing to commit, working tree clean".into())
 			} else {
-				let lines: Vec<String> =
-					entries.iter().map(|(path, status)| format!("{}  {}", status, path)).collect();
+				let lines: Vec<String> = entries
+					.iter()
+					.map(|(path, status)| format!("{}  {}", status, path))
+					.collect();
 				Ok(lines.join("\n"))
 			}
 		}
-		_ => Err(GitforgeError::Internal("unexpected actor response for GetStatus".into())),
+		_ => Err(GitforgeError::Internal(
+			"unexpected actor response for GetStatus".into(),
+		)),
 	}
 }

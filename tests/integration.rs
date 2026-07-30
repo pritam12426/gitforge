@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
 // ── stdio helpers ───────────────────────────────────────────────────────
@@ -24,7 +24,13 @@ fn setup_repo() -> TempDir {
 	}
 
 	write_and_commit(&repo, dir.path(), "README.md", "hello\n", "Initial commit");
-	write_and_commit(&repo, dir.path(), "README.md", "hello\nworld\n", "Second commit");
+	write_and_commit(
+		&repo,
+		dir.path(),
+		"README.md",
+		"hello\nworld\n",
+		"Second commit",
+	);
 
 	dir
 }
@@ -39,11 +45,16 @@ fn write_and_commit(repo: &git2::Repository, dir: &Path, file: &str, contents: &
 	let tree = repo.find_tree(tree_id).unwrap();
 
 	let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
-	let parents: Vec<git2::Commit> =
-		repo.head().ok().and_then(|h| h.peel_to_commit().ok()).into_iter().collect();
+	let parents: Vec<git2::Commit> = repo
+		.head()
+		.ok()
+		.and_then(|h| h.peel_to_commit().ok())
+		.into_iter()
+		.collect();
 	let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
 
-	repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parent_refs).unwrap();
+	repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parent_refs)
+		.unwrap();
 }
 
 /// Spawns the compiled binary against `dir` in stdio mode and returns
@@ -71,7 +82,11 @@ impl TestSession {
 		let stdout = child.stdout.take().expect("stdout");
 		let reader = BufReader::new(stdout);
 
-		TestSession { stdin, reader, child: Some(child) }
+		TestSession {
+			stdin,
+			reader,
+			child: Some(child),
+		}
 	}
 
 	/// Writes each request as one line, reads back one response line per
@@ -94,7 +109,9 @@ impl TestSession {
 			}
 
 			let mut resp_line = String::new();
-			self.reader.read_line(&mut resp_line).expect("read response");
+			self.reader
+				.read_line(&mut resp_line)
+				.expect("read response");
 			responses.push(serde_json::from_str(&resp_line).expect("parse response"));
 		}
 		responses
@@ -136,8 +153,14 @@ fn test_initialize_returns_tools_and_resources() {
 	let resp = session.send_one(json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize" }));
 
 	let tools = resp["result"]["tools"].as_array().expect("tools array");
-	assert!(tools.len() >= 10, "expected at least 10 tools, got {}", tools.len());
-	let resources = resp["result"]["resources"].as_array().expect("resources array");
+	assert!(
+		tools.len() >= 12,
+		"expected at least 12 tools, got {}",
+		tools.len()
+	);
+	let resources = resp["result"]["resources"]
+		.as_array()
+		.expect("resources array");
 	assert_eq!(resources.len(), 2);
 }
 
@@ -203,7 +226,10 @@ fn test_git_status_dirty() {
 		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_status", "arguments": {} } }),
 	);
 	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
-	assert!(text.contains("untracked.txt"), "expected untracked file listed, got: {text}");
+	assert!(
+		text.contains("untracked.txt"),
+		"expected untracked file listed, got: {text}"
+	);
 }
 
 #[test]
@@ -258,7 +284,12 @@ fn test_resources_list_and_read() {
 	let resp = session.send_one(
 		json!({ "jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": { "uri": "git://status" } }),
 	);
-	assert!(resp["result"]["contents"][0]["text"].as_str().unwrap().contains("clean"));
+	assert!(
+		resp["result"]["contents"][0]["text"]
+			.as_str()
+			.unwrap()
+			.contains("clean")
+	);
 
 	let resp = session.send_one(
 		json!({ "jsonrpc": "2.0", "id": 3, "method": "resources/read", "params": { "uri": "git://nope" } }),
@@ -277,14 +308,12 @@ fn test_git_add_and_commit() {
 	);
 	assert_eq!(resp["result"]["content"][0]["text"], json!("staged"));
 
-	let resp = session.send_one(
-		json!({
-			"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-			"params": { "name": "git_commit", "arguments": {
-				"message": "add new.txt", "author_name": "Test", "author_email": "t@example.com"
-			}}
-		}),
-	);
+	let resp = session.send_one(json!({
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": { "name": "git_commit", "arguments": {
+			"message": "add new.txt", "author_name": "Test", "author_email": "t@example.com"
+		}}
+	}));
 	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
 	assert!(text.starts_with("Created commit"));
 }
@@ -297,12 +326,18 @@ fn test_git_branch_create_and_checkout() {
 	let resp = session.send_one(
 		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_branch_create", "arguments": { "name": "feature" } } }),
 	);
-	assert_eq!(resp["result"]["content"][0]["text"], json!("Created branch 'feature'"));
+	assert_eq!(
+		resp["result"]["content"][0]["text"],
+		json!("Created branch 'feature'")
+	);
 
 	let resp = session.send_one(
 		json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "git_checkout", "arguments": { "branch": "feature" } } }),
 	);
-	assert_eq!(resp["result"]["content"][0]["text"], json!("switched branch"));
+	assert_eq!(
+		resp["result"]["content"][0]["text"],
+		json!("switched branch")
+	);
 
 	let resp = session.send_one(
 		json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "git_checkout", "arguments": { "branch": "does-not-exist" } } }),
@@ -325,14 +360,12 @@ fn test_git_merge_fast_forward_and_already_up_to_date() {
 	session.send_one(
 		json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "git_add", "arguments": { "files": ["."] } } }),
 	);
-	session.send_one(
-		json!({
-			"jsonrpc": "2.0", "id": 4, "method": "tools/call",
-			"params": { "name": "git_commit", "arguments": {
-				"message": "feature work", "author_name": "T", "author_email": "t@example.com"
-			}}
-		}),
-	);
+	session.send_one(json!({
+		"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+		"params": { "name": "git_commit", "arguments": {
+			"message": "feature work", "author_name": "T", "author_email": "t@example.com"
+		}}
+	}));
 	session.send_one(
 		json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "git_checkout", "arguments": { "branch": "master" } } }),
 	);
@@ -341,7 +374,10 @@ fn test_git_merge_fast_forward_and_already_up_to_date() {
 		json!({ "jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": { "name": "git_merge", "arguments": { "branch": "feature" } } }),
 	);
 	let text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
-	assert!(text.contains("fast-forward") || text.contains("up-to-date"), "unexpected merge result: {text}");
+	assert!(
+		text.contains("fast-forward") || text.contains("up-to-date"),
+		"unexpected merge result: {text}"
+	);
 
 	// Merging again should now report "already up-to-date".
 	let resp = session.send_one(
@@ -349,6 +385,119 @@ fn test_git_merge_fast_forward_and_already_up_to_date() {
 	);
 	let text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
 	assert!(text.contains("up-to-date"));
+}
+
+#[test]
+fn test_git_diff_unstaged_and_staged() {
+	let dir = setup_repo();
+	let mut session = TestSession::spawn(dir.path());
+
+	// After two commits, there should be no unstaged or staged changes
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_diff_unstaged", "arguments": {} } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+	assert!(text.contains("no unstaged changes"), "got: {text}");
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "git_diff_staged", "arguments": {} } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+	assert!(text.contains("no staged changes"), "got: {text}");
+
+	// Stage a new file — now staged shows diff, unstaged shows nothing
+	std::fs::write(dir.path().join("staged.txt"), "staged content\n").unwrap();
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "git_add", "arguments": { "files": ["staged.txt"] } } }),
+	);
+	assert_eq!(resp["result"]["content"][0]["text"], json!("staged"));
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": { "name": "git_diff_staged", "arguments": {} } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+	assert!(
+		!text.contains("no staged changes"),
+		"expected staged diff, got: {text}"
+	);
+	assert!(
+		text.contains("staged.txt") || text.contains("staged content"),
+		"expected staged.txt in staged diff"
+	);
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "git_diff_unstaged", "arguments": {} } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+	assert!(
+		text.contains("no unstaged changes"),
+		"expected no unstaged changes, got: {text}"
+	);
+}
+
+#[test]
+fn test_git_diff_target() {
+	let dir = setup_repo();
+	let mut session = TestSession::spawn(dir.path());
+
+	// repo has two commits: "Initial commit" and "Second commit".
+	// diff HEAD~1 vs HEAD should show the difference between them.
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_diff", "arguments": { "target": "HEAD~1" } } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+	assert!(
+		text.contains("+world"),
+		"expected diff content, got: {text}"
+	);
+
+	// Flag injection defense
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "git_diff", "arguments": { "target": "--help" } } }),
+	);
+	assert!(
+		resp["error"].is_object(),
+		"expected error for flag injection"
+	);
+
+	// Missing required target
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "git_diff", "arguments": {} } }),
+	);
+	assert!(
+		resp["error"].is_object(),
+		"expected error for missing target"
+	);
+}
+
+#[test]
+fn test_git_branches_filtered() {
+	let dir = setup_repo();
+	let mut session = TestSession::spawn(dir.path());
+
+	session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "git_branch_create", "arguments": { "name": "feature-a" } } }),
+	);
+	session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "git_branch_create", "arguments": { "name": "feature-b" } } }),
+	);
+
+	let resp = session.send_one(
+		json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "git_branches", "arguments": { "branch_type": "local" } } }),
+	);
+	let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+	assert!(
+		text.contains("feature-a"),
+		"expected feature-a in branches, got: {text}"
+	);
+	assert!(
+		text.contains("feature-b"),
+		"expected feature-b in branches, got: {text}"
+	);
+	assert!(
+		text.contains("master"),
+		"expected master in branches, got: {text}"
+	);
 }
 
 #[test]
@@ -370,12 +519,16 @@ fn test_full_mcp_session() {
 	let mut next_id = 3;
 	for name in &tool_names {
 		let args = match name.as_str() {
-			"git_commit" => json!({ "message": "m", "author_name": "a", "author_email": "a@b.com" }),
+			"git_commit" => {
+				json!({ "message": "m", "author_name": "a", "author_email": "a@b.com" })
+			}
 			"git_add" => json!({ "files": ["."] }),
 			"git_branch_create" => json!({ "name": format!("branch-{next_id}") }),
 			"git_checkout" => json!({ "branch": "master" }),
 			"git_merge" => json!({ "branch": "master" }),
 			"git_show" => json!({ "revision": "HEAD" }),
+			"git_diff" => json!({ "target": "HEAD" }),
+			"git_branches" => json!({ "branch_type": "local" }),
 			_ => json!({}),
 		};
 		let resp = session.send_one(
@@ -388,7 +541,8 @@ fn test_full_mcp_session() {
 		next_id += 1;
 	}
 
-	let resources = session.send_one(json!({ "jsonrpc": "2.0", "id": next_id, "method": "resources/list" }));
+	let resources =
+		session.send_one(json!({ "jsonrpc": "2.0", "id": next_id, "method": "resources/list" }));
 	for r in resources["result"]["resources"].as_array().unwrap() {
 		next_id += 1;
 		let uri = r["uri"].as_str().unwrap();
@@ -399,6 +553,7 @@ fn test_full_mcp_session() {
 	}
 
 	// Notification: no response expected.
-	let responses = session.send(&[json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })]);
+	let responses =
+		session.send(&[json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })]);
 	assert!(responses.is_empty());
 }

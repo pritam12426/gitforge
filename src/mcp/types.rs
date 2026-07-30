@@ -35,7 +35,12 @@ pub struct JsonRpcError {
 
 impl JsonRpcResponse {
 	pub fn success(id: Option<serde_json::Value>, result: serde_json::Value) -> Self {
-		JsonRpcResponse { jsonrpc: "2.0".into(), id, result: Some(result), error: None }
+		JsonRpcResponse {
+			jsonrpc: "2.0".into(),
+			id,
+			result: Some(result),
+			error: None,
+		}
 	}
 
 	pub fn error(id: Option<serde_json::Value>, code: i32, message: impl Into<String>) -> Self {
@@ -43,7 +48,11 @@ impl JsonRpcResponse {
 			jsonrpc: "2.0".into(),
 			id,
 			result: None,
-			error: Some(JsonRpcError { code, message: message.into(), data: None }),
+			error: Some(JsonRpcError {
+				code,
+				message: message.into(),
+				data: None,
+			}),
 		}
 	}
 
@@ -51,7 +60,12 @@ impl JsonRpcResponse {
 	/// sentinel to recognise "produce no output" without threading an
 	/// `Option<JsonRpcResponse>` through every call site.
 	pub fn notification() -> Self {
-		JsonRpcResponse { jsonrpc: "2.0".into(), id: None, result: None, error: None }
+		JsonRpcResponse {
+			jsonrpc: "2.0".into(),
+			id: None,
+			result: None,
+			error: None,
+		}
 	}
 
 	pub fn is_notification_sentinel(&self) -> bool {
@@ -59,6 +73,11 @@ impl JsonRpcResponse {
 	}
 }
 
+/// Returns `true` if the request is a JSON-RPC notification (no response
+/// expected).  An `id` of `None` marks a notification per spec, but we
+/// also treat `notifications/*` methods as notifications regardless of
+/// their id — the MCP spec says these standard notifications should not
+/// receive a reply.
 pub fn is_notification(request: &JsonRpcRequest) -> bool {
 	request.method.starts_with("notifications/") || request.id.is_none()
 }

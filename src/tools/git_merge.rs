@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use crate::git::{RepoCommand, RepoHandle, RepoResponse};
-use crate::mcp::{ToolAnnotations, Router};
 use crate::log_trace;
+use crate::mcp::{Router, ToolAnnotations};
 
 use super::{call_actor, required_str, unexpected};
 

@@ -1,10 +1,10 @@
 use serde_json::json;
 
 use crate::git::{RepoCommand, RepoHandle, RepoResponse};
-use crate::mcp::{ToolAnnotations, Router};
 use crate::log_trace;
+use crate::mcp::{Router, ToolAnnotations};
 
-use super::{call_actor, unexpected};
+use super::{call_actor, reject_flag, unexpected};
 
 pub fn register(router: &mut Router, repo: RepoHandle) {
 	log_trace!("tools: registering git_show");
@@ -23,11 +23,20 @@ pub fn register(router: &mut Router, repo: RepoHandle) {
 		}),
 		ToolAnnotations::read_only(),
 		Box::new(move |args| {
-			let revision =
-				args.get("revision").and_then(|v| v.as_str()).unwrap_or("HEAD").to_string();
+			let revision = args
+				.get("revision")
+				.and_then(|v| v.as_str())
+				.unwrap_or("HEAD")
+				.to_string();
+			if revision != "HEAD" {
+				reject_flag(&revision, "revision")?;
+			}
 			log_trace!("tools::git_show: revision='{}'", revision);
 
-			let resp = call_actor(&repo, |respond| RepoCommand::ShowCommit { revision, respond })?;
+			let resp = call_actor(&repo, |respond| RepoCommand::ShowCommit {
+				revision,
+				respond,
+			})?;
 			match resp {
 				RepoResponse::ShowCommit(info) => {
 					let hash = info["hash"].as_str().unwrap_or("");
@@ -39,7 +48,8 @@ pub fn register(router: &mut Router, repo: RepoHandle) {
 
 					#[cfg(feature = "show_time_stamp")]
 					let datetime = {
-						let naive = std::time::UNIX_EPOCH + std::time::Duration::from_secs(time as u64);
+						let naive =
+							std::time::UNIX_EPOCH + std::time::Duration::from_secs(time as u64);
 						let datetime: chrono::DateTime<chrono::Local> = naive.into();
 						format!("{}", datetime.format("%a %b %e %H:%M:%S %Y"))
 					};

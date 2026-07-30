@@ -1,7 +1,7 @@
 use serde_json::json;
 
-use crate::mcp::{ToolAnnotations, Router};
 use crate::log_trace;
+use crate::mcp::{Router, ToolAnnotations};
 
 pub fn register(router: &mut Router) {
 	log_trace!("tools: registering ping");

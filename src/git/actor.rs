@@ -10,6 +10,11 @@ use super::ops;
 /// process's lifetime and processes commands strictly one at a time,
 /// which is what makes it safe to hand out `RepoHandle` clones freely
 /// from the stdio loop.
+///
+/// The `git2::Repository` is `!Send + !Sync`, so it must live on
+/// exactly one thread.  Every git operation (status, log, diff, ...)
+/// is submitted as a `RepoCommand` over an mpsc channel and runs
+/// here, serially — no locks needed.
 pub fn run(repo: git2::Repository, receiver: Receiver<RepoCommand>) {
 	log_info!("git actor: started, waiting for commands");
 	while let Ok(cmd) = receiver.recv() {
@@ -18,6 +23,12 @@ pub fn run(repo: git2::Repository, receiver: Receiver<RepoCommand>) {
 	log_info!("git actor: channel closed, shutting down");
 }
 
+/// Matches a `RepoCommand` to its `ops::*::run` function.  Every arm
+/// follows the same pattern through `run_and_respond`, which provides
+/// uniform lifecycle logging (received → processing → completed/errored).
+///
+/// The `repo` reference is shared — commands execute sequentially on
+/// this single thread, so there is never contention.
 fn dispatch(repo: &git2::Repository, cmd: RepoCommand) {
 	let name = cmd.name();
 	match cmd {
@@ -27,19 +38,46 @@ fn dispatch(repo: &git2::Repository, cmd: RepoCommand) {
 		RepoCommand::GetStatus { respond } => {
 			run_and_respond(name, respond, || ops::status::run(repo));
 		}
-		RepoCommand::GetLog { offset, max_count, respond } => {
+		RepoCommand::GetLog {
+			offset,
+			max_count,
+			respond,
+		} => {
 			run_and_respond(name, respond, || ops::log::run(repo, offset, max_count));
 		}
-		RepoCommand::GetBranches { respond } => {
-			run_and_respond(name, respond, || ops::branches::run(repo));
+		RepoCommand::GetBranches {
+			branch_type,
+			contains,
+			not_contains,
+			respond,
+		} => {
+			run_and_respond(name, respond, || {
+				ops::branches::run(
+					repo,
+					&branch_type,
+					contains.as_deref(),
+					not_contains.as_deref(),
+				)
+			});
 		}
-		RepoCommand::GetDiff { respond } => {
-			run_and_respond(name, respond, || ops::diff::run(repo));
+		RepoCommand::GetDiffUnstaged { respond } => {
+			run_and_respond(name, respond, || ops::diff_unstaged::run(repo));
+		}
+		RepoCommand::GetDiffStaged { respond } => {
+			run_and_respond(name, respond, || ops::diff_staged::run(repo));
+		}
+		RepoCommand::GetDiffTarget { target, respond } => {
+			run_and_respond(name, respond, || ops::diff_target::run(repo, &target));
 		}
 		RepoCommand::ShowCommit { revision, respond } => {
 			run_and_respond(name, respond, || ops::show::run(repo, &revision));
 		}
-		RepoCommand::CreateCommit { message, author_name, author_email, respond } => {
+		RepoCommand::CreateCommit {
+			message,
+			author_name,
+			author_email,
+			respond,
+		} => {
 			run_and_respond(name, respond, || {
 				ops::commit::run(repo, &message, &author_name, &author_email)
 			});
@@ -47,8 +85,14 @@ fn dispatch(repo: &git2::Repository, cmd: RepoCommand) {
 		RepoCommand::StageFiles { paths, respond } => {
 			run_and_respond(name, respond, || ops::stage::run(repo, &paths));
 		}
-		RepoCommand::CreateBranch { name: branch_name, revision, respond } => {
-			run_and_respond(name, respond, || ops::branch_create::run(repo, &branch_name, &revision));
+		RepoCommand::CreateBranch {
+			name: branch_name,
+			revision,
+			respond,
+		} => {
+			run_and_respond(name, respond, || {
+				ops::branch_create::run(repo, &branch_name, &revision)
+			});
 		}
 		RepoCommand::Checkout { branch, respond } => {
 			run_and_respond(name, respond, || ops::checkout::run(repo, &branch));

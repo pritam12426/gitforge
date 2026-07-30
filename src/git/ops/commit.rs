@@ -8,7 +8,11 @@ pub fn run(
 	author_name: &str,
 	author_email: &str,
 ) -> Result<RepoResponse, GitforgeError> {
-	log_trace!("ops::commit: author='{}' msg_len={}", author_name, message.len());
+	log_trace!(
+		"ops::commit: author='{}' msg_len={}",
+		author_name,
+		message.len()
+	);
 	let mut index = repo.index()?;
 	index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
 	index.write()?;

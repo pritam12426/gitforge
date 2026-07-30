@@ -1,10 +1,10 @@
 use serde_json::json;
 
 use crate::git::{RepoCommand, RepoHandle, RepoResponse};
-use crate::mcp::{ToolAnnotations, Router};
 use crate::log_trace;
+use crate::mcp::{Router, ToolAnnotations};
 
-use super::{call_actor, required_str, unexpected};
+use super::{call_actor, reject_flag, required_str, unexpected};
 
 pub fn register(router: &mut Router, repo: RepoHandle) {
 	log_trace!("tools: registering git_branch_create");
@@ -26,10 +26,26 @@ pub fn register(router: &mut Router, repo: RepoHandle) {
 		ToolAnnotations::mutable(),
 		Box::new(move |args| {
 			let name = required_str(&args, "name")?;
-			let revision = args.get("revision").and_then(|v| v.as_str()).unwrap_or("HEAD").to_string();
-			log_trace!("tools::git_branch_create: name='{}' revision='{}'", name, revision);
+			reject_flag(&name, "name")?;
+			let revision = args
+				.get("revision")
+				.and_then(|v| v.as_str())
+				.unwrap_or("HEAD")
+				.to_string();
+			if revision != "HEAD" {
+				reject_flag(&revision, "revision")?;
+			}
+			log_trace!(
+				"tools::git_branch_create: name='{}' revision='{}'",
+				name,
+				revision
+			);
 
-			let resp = call_actor(&repo, |respond| RepoCommand::CreateBranch { name, revision, respond })?;
+			let resp = call_actor(&repo, |respond| RepoCommand::CreateBranch {
+				name,
+				revision,
+				respond,
+			})?;
 			match resp {
 				RepoResponse::BranchCreated(name) => {
 					log_trace!("tools::git_branch_create: created '{}'", name);

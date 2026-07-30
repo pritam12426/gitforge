@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use super::resources::{self, Resource};
-use super::types::{is_notification, JsonRpcRequest, JsonRpcResponse};
+use super::types::{JsonRpcRequest, JsonRpcResponse, is_notification};
 use crate::error::GitforgeError;
 use crate::git::RepoHandle;
 use crate::logging::truncate_for_log;
@@ -14,15 +14,28 @@ use crate::{log_debug, log_error, log_info, log_trace, log_warn};
 pub type ToolHandler =
 	Box<dyn Fn(serde_json::Value) -> Result<serde_json::Value, GitforgeError> + Send + Sync>;
 
+/// MCP Tool Annotations — hints to clients about a tool's behaviour.
+///
+/// These are advisory flags that a client may use for UI affordances
+/// (e.g. grey out read-only tools, confirm before calling destructive
+/// tools, skip confirmation for idempotent tools).
 #[derive(Clone, Serialize)]
 pub struct ToolAnnotations {
+	/// Tool does not modify state (safe to call without confirmation).
 	pub read_only_hint: bool,
+	/// Tool may destroy data (clients may choose to warn).
 	pub destructive_hint: bool,
+	/// Calling the tool repeatedly with the same args produces the same
+	/// result (safe to auto-retry).
 	pub idempotent_hint: bool,
+	/// Tool may affect the outside world or have side effects beyond the
+	/// tool's own output.
 	pub open_world_hint: bool,
 }
 
 impl ToolAnnotations {
+	/// Pre-built annotation for pure-read tools: `git_status`,
+	/// `git_log`, `git_diff*`, `git_show`, `git_branches`.
 	pub const fn read_only() -> Self {
 		ToolAnnotations {
 			read_only_hint: true,
@@ -32,6 +45,7 @@ impl ToolAnnotations {
 		}
 	}
 
+	/// Pre-built annotation for destructive tools: `git_reset`.
 	pub const fn destructive() -> Self {
 		ToolAnnotations {
 			read_only_hint: false,
@@ -41,6 +55,9 @@ impl ToolAnnotations {
 		}
 	}
 
+	/// Pre-built annotation for state-changing but non-destructive
+	/// tools: `git_add`, `git_commit`, `git_branch_create`,
+	/// `git_checkout`, `git_merge`.
 	pub const fn mutable() -> Self {
 		ToolAnnotations {
 			read_only_hint: false,
@@ -58,6 +75,13 @@ struct Tool {
 	annotations: ToolAnnotations,
 }
 
+/// Dispatches incoming JSON-RPC methods to the right handler.
+///
+/// The router is shared by reference (`&Router`) across the transport
+/// loop.  State that is mutated after construction (roots capability,
+/// client roots) uses `Cell`/`RefCell` for interior mutability — these
+/// are single-threaded (all access happens from the stdio reader thread)
+/// so the runtime borrow-check cost is negligible.
 pub struct Router {
 	tools: HashMap<String, Tool>,
 	resources: Vec<Resource>,
@@ -90,7 +114,12 @@ impl Router {
 		log_debug!("router: registered tool '{}'", name);
 		self.tools.insert(
 			name.into(),
-			Tool { handler, description: description.into(), input_schema, annotations },
+			Tool {
+				handler,
+				description: description.into(),
+				input_schema,
+				annotations,
+			},
 		);
 	}
 
@@ -110,16 +139,33 @@ impl Router {
 		self.client_roots.borrow().clone()
 	}
 
-	/// Handles one JSON-RPC request. `req_id` is a correlation id
-	/// allocated by the transport (stdio line), used only
-	/// for logging so a single request's log lines can be grepped
-	/// together across transport -> router -> actor.
+	/// Routes one JSON-RPC request to the appropriate handler and
+	/// returns a response.
+	///
+	/// `req_id` is a correlation id allocated by the transport,
+	/// threaded through every log line so a single request's flow
+	/// (transport → router → actor → transport) can be grepped out
+	/// together.
+	///
+	/// Returns a `JsonRpcResponse` — either a real response to write
+	/// to the wire, or a *notification sentinel* (all fields `None`)
+	/// that tells the transport "this was a notification, produce
+	/// no output".  The sentinel avoids threading `Option` through
+	/// every call site.
 	pub fn handle(&self, request: JsonRpcRequest, req_id: u64) -> JsonRpcResponse {
 		let is_notif = is_notification(&request);
 		let id = request.id.clone();
 
-		log_info!("router[req={}]: dispatching method '{}'", req_id, request.method);
-		log_trace!("router[req={}]: params={}", req_id, truncate_for_log(&format!("{:?}", request.params), 200));
+		log_info!(
+			"router[req={}]: dispatching method '{}'",
+			req_id,
+			request.method
+		);
+		log_trace!(
+			"router[req={}]: params={}",
+			req_id,
+			truncate_for_log(&format!("{:?}", request.params), 200)
+		);
 
 		let result = match request.method.as_str() {
 			"initialize" => self.handle_initialize(&request),
@@ -128,13 +174,23 @@ impl Router {
 			"tools/call" => self.handle_tools_call(request.params, req_id),
 			"resources/list" => self.handle_resources_list(),
 			"resources/read" => self.handle_resources_read(request.params, req_id),
+			// Standard MCP notifications: the spec requires servers
+			// to accept these but expects no response.  Early-return
+			// the sentinel so the transport skips writing to stdout.
 			"notifications/initialized" | "notifications/cancelled" => {
-				log_debug!("router[req={}]: notification '{}' — no response", req_id, request.method);
+				log_debug!(
+					"router[req={}]: notification '{}' — no response",
+					req_id,
+					request.method
+				);
 				return JsonRpcResponse::notification();
 			}
 			other => {
 				log_warn!("router[req={}]: unknown method '{}'", req_id, other);
-				Err(GitforgeError::NotFound(format!("unknown method: {}", other)))
+				Err(GitforgeError::NotFound(format!(
+					"unknown method: {}",
+					other
+				)))
 			}
 		};
 
@@ -154,8 +210,13 @@ impl Router {
 		}
 	}
 
-	fn handle_initialize(&self, request: &JsonRpcRequest) -> Result<serde_json::Value, GitforgeError> {
-		// Extract client capabilities to check for roots support
+	fn handle_initialize(
+		&self,
+		request: &JsonRpcRequest,
+	) -> Result<serde_json::Value, GitforgeError> {
+		// Extract client capabilities to check for roots support.
+		// The transport will later use `client_supports_roots()` to
+		// decide whether to send a `roots/list` request.
 		if let Some(params) = &request.params {
 			if let Some(caps) = params.get("capabilities") {
 				if caps.get("roots").and_then(|r| r.as_object()).is_some() {
@@ -165,7 +226,14 @@ impl Router {
 			}
 		}
 
-		log_trace!("router: building initialize response with {} tools", self.tools.len());
+		log_trace!(
+			"router: building initialize response with {} tools",
+			self.tools.len()
+		);
+		// Include the full tool and resource lists inline in the
+		// initialize response, saving the client a round-trip.  This
+		// is a common MCP server optimisation (not required by the
+		// spec, but all the major clients handle it).
 		Ok(json!({
 			"protocolVersion": "2025-11-25",
 			"capabilities": {
@@ -208,7 +276,8 @@ impl Router {
 		params: Option<serde_json::Value>,
 		req_id: u64,
 	) -> Result<serde_json::Value, GitforgeError> {
-		let params = params.ok_or_else(|| GitforgeError::InvalidRequest("missing params".into()))?;
+		let params =
+			params.ok_or_else(|| GitforgeError::InvalidRequest("missing params".into()))?;
 		let name = params
 			.get("name")
 			.and_then(|v| v.as_str())
@@ -244,7 +313,10 @@ impl Router {
 	}
 
 	fn handle_resources_list(&self) -> Result<serde_json::Value, GitforgeError> {
-		log_trace!("router: resources/list — {} resources", self.resources.len());
+		log_trace!(
+			"router: resources/list — {} resources",
+			self.resources.len()
+		);
 		let list: Vec<serde_json::Value> = self
 			.resources
 			.iter()
@@ -279,7 +351,8 @@ impl Router {
 		params: Option<serde_json::Value>,
 		req_id: u64,
 	) -> Result<serde_json::Value, GitforgeError> {
-		let params = params.ok_or_else(|| GitforgeError::InvalidRequest("missing params".into()))?;
+		let params =
+			params.ok_or_else(|| GitforgeError::InvalidRequest("missing params".into()))?;
 		let uri = params
 			.get("uri")
 			.and_then(|v| v.as_str())

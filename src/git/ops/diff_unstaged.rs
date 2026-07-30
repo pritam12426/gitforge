@@ -5,9 +5,9 @@ use crate::git::commands::RepoResponse;
 use crate::log_trace;
 
 pub fn run(repo: &git2::Repository) -> Result<RepoResponse, GitforgeError> {
-	log_trace!("ops::diff: computing working tree diff");
-	let head_tree = repo.head()?.peel_to_tree()?;
-	let diff = repo.diff_tree_to_workdir(Some(&head_tree), None)?;
+	log_trace!("ops::diff_unstaged: computing index vs workdir diff");
+	let index = repo.index()?;
+	let diff = repo.diff_index_to_workdir(Some(&index), None)?;
 
 	let mut output: Vec<u8> = Vec::new();
 	diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
@@ -18,6 +18,6 @@ pub fn run(repo: &git2::Repository) -> Result<RepoResponse, GitforgeError> {
 	})?;
 
 	let text = String::from_utf8_lossy(&output).to_string();
-	log_trace!("ops::diff: {} bytes diff output", text.len());
+	log_trace!("ops::diff_unstaged: {} bytes diff output", text.len());
 	Ok(RepoResponse::Diff(text))
 }

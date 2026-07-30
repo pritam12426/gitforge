@@ -4,16 +4,23 @@ use serde_json::json;
 
 use crate::error::GitforgeError;
 use crate::git::{RepoCommand, RepoHandle, RepoResponse};
-use crate::mcp::{ToolAnnotations, Router};
 use crate::log_trace;
+use crate::mcp::{Router, ToolAnnotations};
 
 use super::{call_actor, unexpected};
 
+/// Rejects paths that resolve outside the allowed repository boundary.
+///
+/// Uses `canonicalize()` to resolve symlinks, `..`, and relative paths
+/// (e.g. `../../etc/passwd`) to their real filesystem location, then
+/// checks that the result lives under `allowed_repo`.  This prevents
+/// path-traversal attacks where a crafted file argument would stage
+/// files outside the repository.
 fn path_is_allowed(path: &str, allowed_repo: &Path) -> Result<(), GitforgeError> {
 	let p = Path::new(path);
-	let canonical = p.canonicalize().map_err(|_| {
-		GitforgeError::Forbidden(format!("cannot resolve path '{}'", path))
-	})?;
+	let canonical = p
+		.canonicalize()
+		.map_err(|_| GitforgeError::Forbidden(format!("cannot resolve path '{}'", path)))?;
 	if !canonical.starts_with(allowed_repo) {
 		return Err(GitforgeError::Forbidden(format!(
 			"path '{}' resolves outside allowed repository '{}'",
@@ -51,7 +58,11 @@ pub fn register(router: &mut Router, repo: RepoHandle) {
 			let paths: Vec<String> = args
 				.get("files")
 				.and_then(|v| v.as_array())
-				.map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+				.map(|arr| {
+					arr.iter()
+						.filter_map(|v| v.as_str().map(|s| s.to_string()))
+						.collect()
+				})
 				.ok_or_else(|| GitforgeError::InvalidRequest("missing files".into()))?;
 			log_trace!("tools::git_add: {} paths to stage", paths.len());
 

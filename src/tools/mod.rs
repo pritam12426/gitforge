@@ -9,6 +9,8 @@ mod git_branches;
 mod git_checkout;
 mod git_commit;
 mod git_diff;
+mod git_diff_staged;
+mod git_diff_unstaged;
 mod git_log;
 mod git_merge;
 mod git_show;
@@ -18,9 +20,9 @@ mod ping;
 use std::sync::mpsc;
 
 use crate::error::GitforgeError;
-use crate::git::{recv_response, RepoCommand, RepoHandle, RepoResponse};
-use crate::mcp::Router;
+use crate::git::{RepoCommand, RepoHandle, RepoResponse, recv_response};
 use crate::log_trace;
+use crate::mcp::Router;
 
 pub fn register_all(router: &mut Router, repo: RepoHandle) {
 	log_trace!("tools: registering all tool handlers");
@@ -29,6 +31,8 @@ pub fn register_all(router: &mut Router, repo: RepoHandle) {
 	git_log::register(router, repo.clone());
 	git_branches::register(router, repo.clone());
 	git_diff::register(router, repo.clone());
+	git_diff_unstaged::register(router, repo.clone());
+	git_diff_staged::register(router, repo.clone());
 	git_show::register(router, repo.clone());
 	git_commit::register(router, repo.clone());
 	git_add::register(router, repo.clone());
@@ -70,3 +74,22 @@ fn required_str(args: &serde_json::Value, field: &str) -> Result<String, Gitforg
 		.ok_or_else(|| GitforgeError::InvalidRequest(format!("missing {field}")))
 }
 
+/// Defense-in-depth: reject values starting with `-`.
+///
+/// Git CLI commands interpret positional arguments that start with `-`
+/// as flags (e.g. `git checkout --help` prints help instead of switching
+/// branches), so a malicious or accidentally-misnamed branch / revision /
+/// timestamp could trigger unexpected behaviour.  This check rejects
+/// such values before they reach the git layer, even if git2 itself
+/// would handle them correctly — defence in depth.
+///
+/// Applied in `git_show`, `git_log`, `git_branch_create`, `git_checkout`,
+/// `git_branches`, and `git_diff` tool handlers.
+fn reject_flag(val: &str, field: &str) -> Result<(), GitforgeError> {
+	if val.starts_with('-') {
+		return Err(GitforgeError::InvalidRequest(format!(
+			"{field} cannot start with '-'"
+		)));
+	}
+	Ok(())
+}

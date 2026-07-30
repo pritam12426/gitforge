@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use crate::git::{RepoCommand, RepoHandle, RepoResponse};
-use crate::mcp::{ToolAnnotations, Router};
 use crate::log_trace;
+use crate::mcp::{Router, ToolAnnotations};
 
 use super::{call_actor, required_str, unexpected};
 
@@ -23,7 +23,11 @@ pub fn register(router: &mut Router, repo: RepoHandle) {
 			let message = required_str(&args, "message")?;
 			let author_name = required_str(&args, "author_name")?;
 			let author_email = required_str(&args, "author_email")?;
-			log_trace!("tools::git_commit: author='{}' msg_len={}", author_name, message.len());
+			log_trace!(
+				"tools::git_commit: author='{}' msg_len={}",
+				author_name,
+				message.len()
+			);
 
 			let resp = call_actor(&repo, |respond| RepoCommand::CreateCommit {
 				message,
